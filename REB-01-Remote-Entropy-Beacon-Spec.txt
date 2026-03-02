@@ -1,0 +1,561 @@
+PROJECT SPECIFICATION Project Name: Remote Entropy Beacon (REB-01)
+
+  ------------------------------------------------
+  0. Why Entropy Matters: The Invisible Foundation
+  ------------------------------------------------
+
+Right now, as you read this, your devices are burning through random
+numbers at a staggering rate. Every time your phone opens a website,
+it generates a secret random key and uses it to scramble the
+connection. Every time you log in somewhere, the server mints a
+random token to prove it's really you coming back. Every time a
+software update lands on your laptop, a random-number-based
+signature confirms it hasn't been tampered with.
+
+Random numbers are the invisible scaffolding holding up digital
+security. Not algorithms, not passwords — randomness. Here's why:
+
+-   When you see that little padlock in your browser, the thing
+    actually protecting your banking session is a random number that
+    was generated a fraction of a second ago. If anyone could have
+    guessed that number, the padlock is decoration.
+
+-   The code your authenticator app shows you every 30 seconds? It
+    was seeded from a random key. If the key was predictable at
+    birth, every code it ever produces is predictable too.
+
+-   Cryptocurrency wallets are, at their core, just very large
+    random numbers. In 2013, a flaw in Android's random number
+    generator let attackers drain Bitcoin wallets — not by cracking
+    any encryption, but by guessing the randomness that created the
+    keys in the first place.
+
+-   Scientists running climate models, drug simulations, and
+    financial forecasts all feed random numbers into their
+    calculations. If the randomness is subtly biased, so are the
+    results — and nobody notices.
+
+This isn't theoretical. The history of randomness failures reads
+like a thriller — except the victims are real:
+
+-   In 2006, a Debian developer made a tiny, innocent-looking code
+    cleanup to OpenSSL. He commented out two lines that looked like
+    a bug. They weren't. Those lines were feeding entropy into the
+    random number generator. For almost two years, every single SSL
+    certificate, SSH key, and VPN secret generated on Debian and
+    Ubuntu systems was drawn from a pool of roughly 32,000 possible
+    values. That's not a typo. Thirty-two thousand. Servers that
+    should have been protected by numbers too large to guess were
+    instead protected by numbers a laptop could try in seconds. By
+    the time anyone noticed, millions of keys were compromised.
+
+-   In 2010, a team of hackers broke the PlayStation 3's entire
+    security model — not through some exotic attack, but because
+    Sony made a breathtaking mistake. The ECDSA signing algorithm
+    requires a fresh random number for every signature. Sony used
+    the same one. Every time. Once the hackers noticed that, they
+    could work backwards from two signatures to extract Sony's
+    master private key. With that key, anyone could sign code and
+    the PS3 would trust it completely. Sony's billion-dollar content
+    protection system was undone by a single static value where a
+    random one should have been.
+
+-   In 2012, researchers downloaded every publicly visible RSA key
+    on the internet — millions of them — and simply checked whether
+    any of them shared a prime factor. They did. A lot of them.
+    Tens of thousands of devices — routers, firewalls, VPN
+    appliances — had generated their keys at boot time, when the
+    system had almost no entropy. Many devices booted identically:
+    same hardware, same firmware, same startup sequence. So their
+    "random" primes weren't random at all. When two keys share a
+    prime, you can factor both of them in microseconds. Thousands
+    of devices protecting real network traffic were quietly using
+    keys that could be broken with a single math operation.
+
+-   Perhaps the most chilling story involves Dual EC DRBG, a random
+    number generator that NIST standardized in 2006 — with input
+    from the NSA. Cryptographers quickly pointed out that the
+    algorithm contained what looked like a backdoor: if you knew a
+    secret relationship between two internal constants, you could
+    predict all of its output. The warnings were largely ignored.
+    RSA Security made it the default in their widely-used BSAFE
+    toolkit. Juniper Networks used it in their VPN products. Then
+    in 2015, someone discovered that Juniper's code had been
+    quietly modified — the backdoor constants had been changed to
+    different ones, meaning an unknown party had redirected the
+    backdoor to themselves. Years of encrypted VPN traffic, from
+    governments and corporations worldwide, may have been readable
+    by whoever held the secret. The randomness wasn't broken by
+    accident. It was broken on purpose, by design, inside a
+    government standard.
+
+The unsettling part is that bad randomness is completely silent.
+There's no error message. No warning popup. A weak random number
+looks exactly like a strong one. Your browser still shows the
+padlock. The signature still verifies. Everything appears to work
+perfectly — it just isn't actually protecting anything.
+
+That's the problem the Remote Entropy Beacon is built to address.
+Instead of trusting that randomness is "probably fine," this device
+harvests it from real physical processes, tests it continuously, and
+reports exactly how much genuine unpredictability it measured. No
+assumptions. No black boxes. Just physics, math, and transparency.
+
+  ---------------------------------------------------------------
+  0.1 What Is Entropy, Why Does It Matter for Random Numbers,
+      and How Can It Be Harvested?
+  ---------------------------------------------------------------
+
+The word "entropy" gets thrown around a lot in tech circles, often
+loosely. So let's be precise about what it actually means — and
+doesn't mean — in the context of generating random numbers.
+
+What entropy is:
+
+Entropy, in information theory, is a measure of uncertainty. Not
+chaos, not disorder in the colloquial sense — uncertainty. Specifically,
+it measures how surprised you should be by the next value in a
+sequence. If you're flipping a fair coin, each flip carries one "bit"
+of entropy: you genuinely cannot do better than a 50/50 guess. If the
+coin is weighted so it lands heads 99% of the time, each flip carries
+far less entropy — you can almost always guess right.
+
+In cryptography, what we care about is min-entropy: the worst-case
+measure. It doesn't ask "how uncertain are things on average?" It
+asks "how predictable is the single most likely outcome?" That's a
+much harder standard to meet, and it's the right one. An attacker
+doesn't care about your average case. They care about their best
+guess.
+
+Here's a concrete example. Say you sample a sensor and it produces
+values between 0 and 255. If every value is equally likely, you have
+8 bits of entropy per sample — the maximum. But if the sensor tends
+to hover around 120-130, with occasional excursions, the most likely
+values might each appear 5-10% of the time. Your min-entropy per
+sample might be only 3 or 4 bits. You're still getting a byte of
+data, but there are only 3-4 bits of genuine unpredictability hiding
+inside it. The rest is pattern.
+
+Why entropy matters for random numbers:
+
+Here's the thing that trips people up: a computer, left to itself,
+is a deterministic machine. Give it the same inputs and it will
+produce the same outputs, every time, forever. That's what makes
+computers useful — and it's exactly what makes them terrible at
+generating random numbers.
+
+When your computer needs a random number, it typically uses what's
+called a pseudorandom number generator (PRNG). This is an algorithm
+that takes a small unpredictable value — called a seed — and
+stretches it into a long stream of numbers that look random. The
+important word there is "look." The output of a PRNG is entirely
+determined by its seed. Same seed, same stream. Every time.
+
+So the entire security of the system collapses down to one question:
+where did the seed come from? If the seed has enough entropy — enough
+genuine, physical unpredictability — then the PRNG output is
+effectively unguessable. If the seed is weak, predictable, or
+reused, the output inherits that weakness. No amount of algorithmic
+cleverness downstream can create entropy that wasn't there at the
+source. You can stir a cup of tea with the most elegant spoon in
+the world, but if there's no sugar in the cup, the tea isn't getting
+any sweeter.
+
+This is why the Debian OpenSSL disaster was so devastating. The
+algorithm was fine. The code was fine. But the entropy feeding the
+seed was accidentally reduced to almost nothing, and everything
+built on top of it — millions of keys that looked perfectly strong —
+was quietly worthless.
+
+How entropy can be harvested:
+
+Since computers can't generate true randomness on their own, they
+have to import it from the physical world. The question is: from
+where?
+
+Most computers already do this to some extent. Your operating system
+quietly collects bits of unpredictability from keyboard timings,
+mouse movements, disk seek times, and network packet arrivals. These
+go into a system entropy pool (on Linux, this feeds /dev/urandom),
+which seeds the PRNGs that applications rely on. For a laptop sitting
+on someone's desk being actively used, this works reasonably well.
+
+But it falls apart in exactly the environments where security matters
+most: servers in data centers with no keyboard and no mouse. IoT
+devices that boot identically every time. Embedded systems with no
+user interaction at all. Virtual machines that are cloned from the
+same snapshot. These are the systems generating your TLS certificates,
+your VPN keys, your authentication tokens — and they're often the
+most entropy-starved.
+
+Dedicated entropy sources solve this by harvesting unpredictability
+from physical processes that are fundamentally non-deterministic.
+Common approaches include:
+
+-   Thermal noise: Every electrical resistor produces tiny voltage
+    fluctuations caused by the random motion of electrons. These
+    fluctuations are quantum-mechanical in origin and genuinely
+    unpredictable. Many hardware random number generators (like
+    Intel's RDRAND instruction) use on-chip thermal noise sources.
+
+-   Shot noise: When current flows through a semiconductor junction,
+    individual electrons cross the barrier at random intervals. The
+    statistical variation in their arrival times is another quantum
+    effect that can be sampled for entropy.
+
+-   Radioactive decay: The timing of individual atomic decay events
+    is fundamentally random according to quantum mechanics. Some
+    entropy sources use a small radioactive sample and a Geiger
+    counter. It works beautifully, but try getting one through
+    customs.
+
+-   Atmospheric and environmental noise: Radio static, microphone
+    hiss, photon arrival times, and vibration sensors all capture
+    physical processes that are practically impossible to predict or
+    reproduce. These sources are less "pure" than quantum effects —
+    some of what they measure is deterministic (like a truck driving
+    past a vibration sensor) — so they require more careful entropy
+    estimation and conditioning.
+
+-   Oscillator jitter: Two independent clock oscillators on a chip
+    will never run at exactly the same frequency. The tiny drift
+    between them is influenced by thermal noise and manufacturing
+    variation. Sampling one clock with another captures this jitter
+    as entropy. Many microcontrollers offer this as a built-in
+    hardware RNG source.
+
+The Remote Entropy Beacon takes the environmental noise approach: it
+uses an accelerometer and a light sensor to capture physical
+processes — vibration and light variation — that are happening in the
+real world, right where the device is deployed. This is a deliberate
+choice. The goal isn't to build the purest possible quantum entropy
+source (those exist already, and they cost thousands). The goal is
+to build something cheap, deployable, and transparent — a device
+you can drop in a field, on a rooftop, or in a server room, and
+have it continuously answer the question: "How much real randomness
+is available here, right now, and can I prove it?"
+
+That's what makes it a beacon. It doesn't just generate entropy. It
+measures it, tests it, signs the results, and broadcasts them for
+anyone to verify. The randomness isn't hidden inside a chip. It's
+out in the open, with the math to back it up.
+
+  ------------------------
+  1. Project Description
+  ------------------------
+
+The Remote Entropy Beacon (REB-01) is a low-power, field-deployable
+embedded system that:
+
+-   Harvests entropy from natural physical processes (motion + light
+    variation)
+-   Continuously runs on-device entropy health tests
+-   Estimates a conservative lower bound on min-entropy
+-   Cryptographically hashes and signs entropy output
+-   Transmits signed entropy reports over cellular (LTE-M / NB-IoT)
+-   Uses a low-cost IoT SIM (1NCE) for long-term data connectivity
+
+The device is designed to be: - Physically deployable in outdoor
+environments - Cryptographically transparent - Statistically
+self-reporting - Architecturally clean (MCU handles entropy, modem
+handles networking)
+
+  --------------------------
+  2. Locked Design Choices
+  --------------------------
+
+2.1 Microcontroller (MCU)
+
+Model: ST NUCLEO-L432KC
+Chip:  STM32L432KC (Cortex-M4, ultra-low-power L4 series)
+Board: Nucleo-32 form factor
+
+Specifications:
+-   256 KB Flash
+-   64 KB SRAM
+-   Cortex-M4 with FPU
+-   Ultra-low-power sleep modes (same L4 family)
+-   I2C, UART, SPI peripherals
+-   Integrated ST-Link debugger
+-   Nucleo-32 form factor (roughly half the size of Nucleo-64)
+
+Reason: The entropy pipeline requires approximately 15-20 KB of RAM
+(entropy sample windows, SHA-256 context, Ed25519 signing stack,
+JSON report buffers, UART buffers, and MCV histogram). The L432KC
+provides 64 KB SRAM — sufficient headroom without the excess of
+larger boards. The Cortex-M4 core keeps Ed25519 performance
+comfortable, and the L4 ultra-low-power family provides a path to
+battery operation in future revisions. The smaller Nucleo-32 board
+reduces physical footprint for field deployment.
+
+No substitutes allowed.
+
+------------------------------------------------------------------------
+
+2.2 Cellular Modem Model: SIM7080G Development Board (LTE-M / NB-IoT)
+
+Requirements: - Must be SIM7080G - Must be development board / breakout
+(NOT bare module) - Must support Cat-M1 and NB-IoT - Must support Europe
+bands - Must expose UART interface
+
+Reason: - Easy AT-command integration - Good documentation - Suitable
+for Spain - Low-power LPWA support
+
+------------------------------------------------------------------------
+
+2.3 Cellular Provider Provider: 1NCE IoT SIM
+
+Requirements: - Standard physical SIM (nano-SIM preferred) - Data-only
+plan - EU coverage
+
+------------------------------------------------------------------------
+
+2.4 Entropy Sensors
+
+Accelerometer: - LIS3DH breakout board OR - ADXL345 breakout board -
+Must support I2C - Must operate at 3.3V
+
+Light Sensor: - BH1750 (I2C digital lux sensor) - Must be 3.3V
+compatible
+
+  ------------------------------------
+  3. Complete Hardware Purchase List
+  ------------------------------------
+
+Core System: 1× ST NUCLEO-L432KC Development Board 1× SIM7080G LTE-M /
+NB-IoT Development Board 1× LTE-M / NB-IoT Antenna (compatible with
+modem board) 1× u.FL to SMA pigtail cable (if modem requires it) 1× 1NCE
+IoT SIM card
+
+Entropy Sensors: 1× LIS3DH breakout board (or ADXL345) 1× BH1750 light
+sensor module
+
+Prototyping Materials: 1× Medium solderless breadboard 1× Dupont jumper
+wire kit (male-male + male-female) 1× USB-A to Micro-USB cable (for
+Nucleo) 1× USB cable for modem board (if required)
+
+Power: 1× 5V USB wall adapter 1× USB power cable (as required by modem)
+
+  ------------------------
+  4. System Architecture
+  ------------------------
+
+STM32L432KC (NUCLEO-32) - I2C → Accelerometer - I2C → Light Sensor -
+UART → SIM7080G
+
+Cellular (LTE-M / NB-IoT) → Remote Server
+
+  ----------------------------------------
+  5. Functional Requirements (Prototype)
+  ----------------------------------------
+
+The device must:
+
+1.  Sample accelerometer at 200 Hz bursts
+2.  Sample light sensor at 50 Hz bursts
+3.  Extract candidate entropy bits via:
+    -   Delta sign method
+    -   Timing jitter
+4.  Run:
+    -   Repetition Count Test (RCT)
+    -   Adaptive Proportion Test (APT)
+5.  Estimate min-entropy lower bound (MCV estimator)
+6.  Hash candidate bits using SHA-256
+7.  Produce 32 bytes entropy output per interval
+8.  Sign report using Ed25519
+9.  Transmit JSON report over cellular
+
+  -----------------------------------------------
+  6. Development Tools Required (Software Only)
+  -----------------------------------------------
+
+Install on laptop:
+
+-   STM32CubeIDE
+-   SIM7080G AT command manual
+-   Serial terminal program (e.g., PuTTY or screen)
+
+  ----------------------------------
+  7. Estimated Total Hardware Cost
+  ----------------------------------
+
+Approximate range: 90–130 EUR
+
+  ----------------------------------
+  8. Security Considerations
+  ----------------------------------
+
+8.1 Report Integrity and Authenticity (Ed25519 Signing)
+
+Every entropy report transmitted by the device is signed using
+Ed25519. This ensures that:
+-   Any recipient can verify the report was produced by this
+    specific device
+-   Any modification to the report payload (entropy data, metadata,
+    timestamps) invalidates the signature
+-   An attacker observing or intercepting network traffic cannot
+    forge valid reports
+
+Ed25519 was chosen over ECDSA because it uses deterministic nonce
+generation — the signing process does not consume entropy. This
+avoids the class of catastrophic failure demonstrated by the Sony
+PS3 breach (see Section 0), where ECDSA nonce reuse exposed the
+private key.
+
+------------------------------------------------------------------------
+
+8.2 Anti-Replay Protection (Monotonic Sequence Numbers)
+
+Each signed report includes a strictly monotonic sequence number
+in the signed payload. The sequence number:
+-   Starts at 1 on first boot after provisioning
+-   Increments by 1 for every report produced
+-   Is stored in non-volatile memory (Flash) so it survives reboots
+-   Is included inside the signed data, so it cannot be stripped
+    or altered without breaking the signature
+
+The receiving server must reject any report with a sequence number
+equal to or lower than the last accepted value from that device.
+This prevents an attacker from capturing a valid signed report and
+replaying it later.
+
+------------------------------------------------------------------------
+
+8.3 Report Suppression Detection (Server-Side Gap Detection)
+
+A man-in-the-middle cannot forge or alter signed reports, but they
+can silently drop them. To detect suppression:
+-   The server tracks the expected next sequence number per device
+-   Any gap in the sequence triggers an alert
+-   Reports include a UTC timestamp (sourced from the cellular
+    modem's network time). The server cross-references timestamps
+    against sequence numbers to detect time gaps consistent with
+    suppression
+-   Persistent gaps beyond a configurable threshold (e.g., 3
+    consecutive missed intervals) raise an alarm
+
+Note: suppression cannot be fully prevented at the device level —
+a sufficiently positioned attacker can always block traffic. The
+goal is detection, not prevention.
+
+------------------------------------------------------------------------
+
+8.4 Transport Encryption
+
+Report confidentiality is a non-goal for the prototype. Entropy
+reports are intended to be publicly verifiable, and the signed
+payload contains no secrets. The entropy output itself is a
+SHA-256 hash — it reveals nothing about the raw sensor data or
+the device's internal state.
+
+However, TLS should be used for the cellular transport when
+practical, because:
+-   It prevents traffic analysis (an observer cannot correlate
+    report timing or size patterns)
+-   It protects the device identity (the server endpoint and
+    device public key would otherwise be visible)
+-   The SIM7080G supports TLS natively via AT commands, so the
+    implementation cost is low
+
+For the prototype, TLS over the modem's built-in AT+CSSLCFG stack
+is the recommended approach. Full mutual TLS (mTLS) is deferred
+to post-prototype (see 8.6).
+
+------------------------------------------------------------------------
+
+8.5 Key Provisioning [TBD]
+
+The Ed25519 signing keypair must be established on the device and
+the corresponding public key must reach verifiers through a trusted
+channel. The provisioning strategy is not yet finalized.
+
+Candidate strategies under consideration:
+
+Strategy A — On-device key generation:
+-   The device generates its own Ed25519 keypair using entropy
+    harvested from its own sensors after an initial "entropy burn-in"
+    period (e.g., 60 seconds of continuous sampling and health
+    testing before the first key generation)
+-   The public key is transmitted to the server over TLS during
+    an initial enrollment phase
+-   Advantage: The private key never exists outside the device
+-   Risk: The device must have sufficient entropy at generation
+    time — the burn-in period and health tests must be validated
+    before this strategy is trusted
+
+Strategy B — Offline injection during provisioning:
+-   The keypair is generated on a secure provisioning workstation
+-   The private key is written to the device's Flash over SWD/JTAG
+    during initial programming
+-   The public key is registered on the server at provisioning time
+-   Advantage: Key quality is guaranteed by the provisioning
+    workstation's entropy source
+-   Risk: The private key exists momentarily on the workstation.
+    The provisioning environment must be trusted and air-gapped
+
+Strategy C — Hybrid:
+-   The provisioning workstation generates a device identity
+    certificate and a seed
+-   The device combines the injected seed with locally harvested
+    entropy to derive its signing key
+-   Advantage: Key quality does not depend entirely on either source
+-   Risk: More complex implementation; requires a key derivation
+    scheme
+
+Decision required before firmware development begins.
+
+------------------------------------------------------------------------
+
+8.6 Server Authentication [TBD]
+
+The device signs its reports, but the prototype does not yet verify
+the identity of the server it transmits to. A man-in-the-middle
+could impersonate the server to:
+-   Cause the device to waste bandwidth and power transmitting to
+    a black hole
+-   Observe transmission patterns (timing, frequency, payload size)
+-   Respond with malicious AT-command payloads if the firmware
+    parses server responses
+
+Candidate strategies under consideration:
+
+Strategy A — TLS with server certificate pinning:
+-   The server's TLS certificate (or its public key hash) is
+    embedded in the device firmware at provisioning time
+-   The SIM7080G's TLS stack validates the server certificate
+    against the pinned value before transmitting
+-   Advantage: Simple, effective, supported by the modem's AT
+    command set
+-   Risk: Certificate rotation requires a firmware update or a
+    pin rotation mechanism
+
+Strategy B — Mutual TLS (mTLS):
+-   Both the server and device present certificates during the
+    TLS handshake
+-   The device's client certificate is provisioned alongside its
+    signing key (see 8.5)
+-   Advantage: The server also verifies the device's identity at
+    the transport layer, adding defense in depth beyond Ed25519
+    report signing
+-   Risk: Requires a certificate authority (CA) or a
+    pre-shared trust model; increases provisioning complexity
+
+Strategy C — Pre-shared symmetric key (PSK-TLS):
+-   A shared secret is provisioned on both the device and server
+-   TLS-PSK is used for mutual authentication without certificates
+-   Advantage: Simpler than mTLS; no CA infrastructure needed
+-   Risk: Symmetric key management; the shared secret must be
+    provisioned securely (same challenges as 8.5)
+
+Decision required before networking implementation begins.
+
+  ----------------------------------
+  9. Scope Limitations (Prototype)
+  ----------------------------------
+
+-   Not miniaturized
+-   Not battery optimized
+-   Not outdoor enclosed
+-   Not solar powered
+
+This is a fully functional entropy beacon core platform.
