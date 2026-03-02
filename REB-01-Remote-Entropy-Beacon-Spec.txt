@@ -255,10 +255,12 @@ embedded system that:
 -   Transmits signed entropy reports over cellular (LTE-M / NB-IoT)
 -   Uses a low-cost IoT SIM (1NCE) for long-term data connectivity
 
-The device is designed to be: - Physically deployable in outdoor
-environments - Cryptographically transparent - Statistically
-self-reporting - Architecturally clean (MCU handles entropy, modem
-handles networking)
+The device is designed to be:
+-   Physically deployable in outdoor environments
+-   Cryptographically transparent
+-   Statistically self-reporting
+-   Architecturally clean (MCU handles entropy, modem handles
+    networking)
 
   --------------------------
   2. Locked Design Choices
@@ -292,56 +294,80 @@ No substitutes allowed.
 
 ------------------------------------------------------------------------
 
-2.2 Cellular Modem Model: SIM7080G Development Board (LTE-M / NB-IoT)
+2.2 Cellular Modem
 
-Requirements: - Must be SIM7080G - Must be development board / breakout
-(NOT bare module) - Must support Cat-M1 and NB-IoT - Must support Europe
-bands - Must expose UART interface
+Model: SIM7080G Development Board (LTE-M / NB-IoT)
 
-Reason: - Easy AT-command integration - Good documentation - Suitable
-for Spain - Low-power LPWA support
+Requirements:
+-   Must be SIM7080G
+-   Must be development board / breakout (NOT bare module)
+-   Must support Cat-M1 and NB-IoT
+-   Must support Europe bands
+-   Must expose UART interface
+
+Reason:
+-   Easy AT-command integration
+-   Good documentation
+-   Suitable for Spain
+-   Low-power LPWA support
 
 ------------------------------------------------------------------------
 
-2.3 Cellular Provider Provider: 1NCE IoT SIM
+2.3 Cellular Provider
 
-Requirements: - Standard physical SIM (nano-SIM preferred) - Data-only
-plan - EU coverage
+Provider: 1NCE IoT SIM
+
+Requirements:
+-   Standard physical SIM (nano-SIM preferred)
+-   Data-only plan
+-   EU coverage
 
 ------------------------------------------------------------------------
 
 2.4 Entropy Sensors
 
-Accelerometer: - LIS3DH breakout board OR - ADXL345 breakout board -
-Must support I2C - Must operate at 3.3V
+Accelerometer:
+-   LIS3DH breakout board OR ADXL345 breakout board
+-   Must support I2C
+-   Must operate at 3.3V
 
-Light Sensor: - BH1750 (I2C digital lux sensor) - Must be 3.3V
-compatible
+Light Sensor:
+-   BH1750 (I2C digital lux sensor)
+-   Must be 3.3V compatible
 
   ------------------------------------
   3. Complete Hardware Purchase List
   ------------------------------------
 
-Core System: 1× ST NUCLEO-L432KC Development Board 1× SIM7080G LTE-M /
-NB-IoT Development Board 1× LTE-M / NB-IoT Antenna (compatible with
-modem board) 1× u.FL to SMA pigtail cable (if modem requires it) 1× 1NCE
-IoT SIM card
+Core System:
+-   1× ST NUCLEO-L432KC Development Board
+-   1× SIM7080G LTE-M / NB-IoT Development Board
+-   1× LTE-M / NB-IoT Antenna (compatible with modem board)
+-   1× u.FL to SMA pigtail cable (if modem requires it)
+-   1× 1NCE IoT SIM card
 
-Entropy Sensors: 1× LIS3DH breakout board (or ADXL345) 1× BH1750 light
-sensor module
+Entropy Sensors:
+-   1× LIS3DH breakout board (or ADXL345)
+-   1× BH1750 light sensor module
 
-Prototyping Materials: 1× Medium solderless breadboard 1× Dupont jumper
-wire kit (male-male + male-female) 1× USB-A to Micro-USB cable (for
-Nucleo) 1× USB cable for modem board (if required)
+Prototyping Materials:
+-   1× Medium solderless breadboard
+-   1× Dupont jumper wire kit (male-male + male-female)
+-   1× USB-A to Micro-USB cable (for Nucleo)
+-   1× USB cable for modem board (if required)
 
-Power: 1× 5V USB wall adapter 1× USB power cable (as required by modem)
+Power:
+-   1× 5V USB wall adapter
+-   1× USB power cable (as required by modem)
 
   ------------------------
   4. System Architecture
   ------------------------
 
-STM32L432KC (NUCLEO-32) - I2C → Accelerometer - I2C → Light Sensor -
-UART → SIM7080G
+STM32L432KC (NUCLEO-32)
+-   I2C → Accelerometer
+-   I2C → Light Sensor
+-   UART → SIM7080G
 
 Cellular (LTE-M / NB-IoT) → Remote Server
 
@@ -559,3 +585,379 @@ Decision required before networking implementation begins.
 -   Not solar powered
 
 This is a fully functional entropy beacon core platform.
+
+  ============================================================
+  10. Production Roadmap: Prototype to Deployable Product
+  ============================================================
+
+Target scale: 1-10 units (personal / research use)
+Target environment: outdoor (field / rooftop), Spain
+Target power: solar + battery, fully autonomous
+Target stack: device + backend server + public verification dashboard
+
+This section covers the path from "working breadboard" to "deployable
+outdoor product with full-stack infrastructure."
+
+  -----------------------------------------------
+  10.1 Phase 1: Breadboard Prototype (Firmware)
+  -----------------------------------------------
+
+Goal: Prove the entropy pipeline works end-to-end on the breadboard.
+
+10.1.1 Bring-up and driver development
+
+-   STM32CubeIDE project setup (STM32L432KC target)
+-   I2C driver: ADXL345 (accelerometer, 200 Hz burst sampling)
+-   I2C driver: BH1750 (light sensor, 50 Hz burst sampling)
+-   UART driver: SIM7080G AT command interface
+-   Validate each peripheral independently via serial debug output
+
+10.1.2 Entropy pipeline
+
+-   Delta-sign bit extraction from accelerometer axes
+-   Timing jitter extraction from sample intervals
+-   Repetition Count Test (RCT) — per NIST SP 800-90B
+-   Adaptive Proportion Test (APT) — per NIST SP 800-90B
+-   Most Common Value (MCV) min-entropy estimator
+-   SHA-256 conditioning: raw candidate bits -> 32 bytes output
+-   JSON report assembly (entropy output, min-entropy estimate,
+    health test results, sequence number, timestamp)
+
+10.1.3 Cryptographic signing
+
+-   Ed25519 implementation (Monocypher or TweetNaCl — both small,
+    auditable, no dynamic allocation)
+-   Sign JSON report payload
+-   Sequence number: monotonic counter stored in STM32 Flash
+    (wear-leveled across a dedicated Flash page)
+
+10.1.4 Cellular transmission
+
+-   SIM7080G modem init (AT command sequence)
+-   Network registration (LTE-M or NB-IoT, configurable)
+-   NTP time sync from modem (AT+CNTP or network time)
+-   HTTPS POST of signed JSON report to server endpoint
+-   TLS via modem's built-in AT+CSSLCFG stack
+-   Retry logic with exponential backoff
+-   Graceful handling of network loss
+
+10.1.5 Resolved spec decisions
+
+-   Key provisioning (Section 8.5): Strategy B — offline injection.
+    Generate Ed25519 keypair on an air-gapped laptop, flash private
+    key to STM32 via SWD, register public key on server. Simple and
+    trustworthy at this scale.
+
+-   Server authentication (Section 8.6): Strategy A — certificate
+    pinning. Pin the server's TLS certificate hash in firmware.
+    For 1-10 units, certificate rotation via reflash is acceptable.
+
+-   Report interval: 5 minutes. Balances entropy accumulation,
+    power budget, and data volume (~288 reports/day, ~8,640/month
+    per device, well within 1NCE's 500 MB over 10 years).
+
+Deliverable: breadboard prototype transmitting signed entropy
+reports to a test server over cellular.
+
+  ------------------------------------
+  10.2 Phase 2: Backend Server
+  ------------------------------------
+
+Goal: Receive, validate, store, and serve entropy reports.
+
+10.2.1 Core server
+
+-   Language/framework: Python (FastAPI) or Go — lightweight,
+    easy to deploy
+-   HTTPS endpoint: POST /api/v1/reports
+-   Ed25519 signature verification (reject invalid signatures)
+-   Sequence number validation (reject replay, detect gaps)
+-   Timestamp cross-reference (detect suppression)
+-   Store reports in PostgreSQL:
+    -   device_id, seq, timestamp, entropy_hex, min_entropy_estimate,
+        health_status, raw_json, signature
+-   Device registry table:
+    -   device_id, public_key, last_seq, last_seen
+
+10.2.2 Alerting
+
+-   Gap detection: alert if >3 consecutive reports missed
+-   Health degradation: alert if min-entropy drops below threshold
+-   Device offline: alert if no report received within 3x
+    report interval
+
+10.2.3 Deployment
+
+-   VPS in Europe (Hetzner, OVH, or similar — cheap, low latency
+    to Spain)
+-   Let's Encrypt TLS certificate
+-   Docker containerized (server + PostgreSQL)
+-   Nginx reverse proxy
+
+Deliverable: server accepting and validating reports from the
+breadboard prototype.
+
+  ------------------------------------
+  10.3 Phase 3: Custom PCB Design
+  ------------------------------------
+
+Goal: Replace the breadboard with a single board designed for the
+enclosure and power system.
+
+10.3.1 Schematic
+
+-   STM32L432KCU6 (QFN-32, same chip as Nucleo but bare)
+-   SIM7080G module (SMD, direct solder)
+-   ADXL345 (LGA-14) or LIS3DH (LGA-16)
+-   BH1750FVI (WSOF-6)
+-   SWD header (Tag-Connect TC2030 for small footprint)
+-   Nano-SIM holder
+-   U.FL antenna connector (LTE) + optional GNSS
+-   Power management (see 10.3.2)
+-   ESD protection (TVS diodes on antenna, SIM, SWD, sensor lines)
+-   Decoupling: 100nF + 10uF on each power rail
+-   Test points on key signals (I2C, UART TX/RX, VBAT, VSOLAR)
+
+10.3.2 Power management circuit
+
+-   Solar input: 5-6V panel -> charge controller
+-   Charge controller: TP4056 (simple, proven for LiPo) or BQ25504
+    (energy harvesting, more efficient but more complex).
+    Recommendation: TP4056 for 1-10 units — simple, cheap,
+    well-documented.
+-   LiPo battery: 3.7V, 2000-3000 mAh (single 18650 cell or pouch)
+-   LDO regulator: 3.3V rail for MCU + sensors (MCP1700 or AP2112)
+-   Battery protection: DW01A + FS8205 (over-discharge, over-charge,
+    short circuit) — or use a protected 18650 cell
+-   Voltage monitoring: STM32 ADC channel on battery voltage divider
+    (firmware can report battery health and trigger low-power
+    shutdown)
+
+Power budget estimate:
+-   Sleep (MCU + modem PSM + sensors idle): ~10 uA
+-   Active (sampling 2s + TX 10s = 12s every 5 min): ~300 mA peak
+-   Average consumption: ~12 mA -> ~288 mAh/day
+-   3000 mAh battery alone: ~10 days without sun
+-   2W solar panel in Spain: ~1600-2700 mAh/day harvest ->
+    easily net positive
+
+10.3.3 PCB layout
+
+-   2-layer PCB (sufficient for this complexity)
+-   Board size: target ~60x40 mm
+-   Keep SIM7080G antenna trace/connector away from MCU and sensors
+-   Solid ground plane under SIM7080G
+-   Fab + assembly: JLCPCB or PCBWay (supports SMD assembly,
+    ships to Spain in ~7-10 days, ~$2-5/board at small quantities)
+
+10.3.4 Assembly
+
+-   JLCPCB SMT assembly for main components
+-   Hand-solder any through-hole parts (SMA connector, battery
+    connector, SWD header, solar input connector)
+
+Deliverable: assembled custom PCB, tested and running same
+firmware as the breadboard prototype.
+
+  ------------------------------------------------
+  10.4 Phase 4: Enclosure and Physical Deployment
+  ------------------------------------------------
+
+Goal: Outdoor-rated housing with solar panel and mounting.
+
+10.4.1 Enclosure options (1-10 units)
+
+Option A — Off-the-shelf IP65 junction box (~10-15 EUR):
+-   ABS or polycarbonate, ~100x68x50 mm
+-   Cable glands for antenna and solar cable
+-   Drill holes for SMA feedthrough and cable glands
+-   Fastest, cheapest, proven waterproof
+
+Option B — 3D-printed custom enclosure (~5-10 EUR in material):
+-   PETG or ASA filament (UV resistant)
+-   Design in FreeCAD/Fusion360
+-   Custom fit for PCB standoffs, antenna mount, solar connector
+-   More work, nicer fit, but requires sealing (silicone gasket
+    or printed O-ring groove)
+
+Recommendation: Option A for first deployments. Less risk.
+
+10.4.2 Solar panel
+
+-   5V/2W mini solar panel (~8-12 EUR)
+-   Mount on enclosure lid or adjacent bracket
+-   Cable gland entry into enclosure
+-   Conformal coating on PCB for humidity protection (spray-on,
+    e.g., MG Chemicals 422B)
+
+10.4.3 Antenna
+
+-   LTE antenna: SMA feedthrough in enclosure wall, external whip
+    or patch antenna (the one included with U137 works; for custom
+    PCB, source a similar SMA whip antenna)
+-   Placement: vertical orientation, clear of metal obstructions
+
+10.4.4 Mounting
+
+-   Stainless steel hose clamps or DIN rail for pole/mast mounting
+-   Wall mounting: stainless steel brackets + screws
+-   Cable ties as temporary field mounting
+
+Deliverable: weatherproof, solar-powered device ready for outdoor
+deployment.
+
+  -----------------------------------------------
+  10.5 Phase 5: Production Firmware Hardening
+  -----------------------------------------------
+
+Goal: Make firmware reliable enough for unattended long-term
+operation.
+
+10.5.1 Watchdog and recovery
+
+-   Independent Watchdog (IWDG) — resets MCU if firmware hangs
+-   Save crash info (fault register, PC, LR) to Flash before reset
+-   Boot counter: detect and report repeated resets (brown-out,
+    crash loop)
+
+10.5.2 Power management firmware
+
+-   STM32 STOP2 mode between sampling intervals (~1.5 uA)
+-   RTC wakeup alarm for next sampling cycle
+-   SIM7080G PSM (Power Saving Mode) or eDRX between transmissions
+-   Battery voltage monitoring: degrade gracefully (reduce report
+    frequency if battery low, shut down modem if critical)
+-   Solar charge state reporting in entropy reports
+
+10.5.3 OTA firmware update (optional but valuable)
+
+-   Dual-bank Flash on STM32L432 (128 KB + 128 KB)
+-   Server pushes firmware image URL in response to report
+-   Device downloads over HTTPS, verifies Ed25519 signature,
+    swaps bank
+-   Fallback: if new firmware fails to boot (watchdog timeout),
+    revert to previous bank
+-   For 1-10 units, SWD reflash is also acceptable as fallback
+
+10.5.4 Entropy quality monitoring
+
+-   Long-running min-entropy trend tracking
+-   Alert (in report metadata) if entropy quality degrades
+    over time
+-   Automatic source health scoring per sensor
+
+Deliverable: firmware that runs unattended for months, recovers
+from faults, manages power, and reports its own health.
+
+  ------------------------------------------------
+  10.6 Phase 6: Public Verification Dashboard
+  ------------------------------------------------
+
+Goal: Anyone can see the device is working and verify report
+integrity.
+
+10.6.1 Web frontend
+
+-   Simple static site (HTML/JS) or lightweight framework
+    (Svelte, etc.)
+-   Device status: online/offline, last report time, battery level
+-   Live entropy feed: latest reports with hex output
+-   Signature verification: client-side Ed25519 verify in browser
+    (user can paste a report + signature and verify independently)
+-   Historical charts: min-entropy over time, report gaps,
+    battery trend
+
+10.6.2 Public API
+
+-   GET /api/v1/devices — list registered devices
+-   GET /api/v1/devices/{id}/reports — paginated report history
+-   GET /api/v1/devices/{id}/latest — most recent report
+-   GET /api/v1/devices/{id}/pubkey — device public key
+    for verification
+-   All responses include raw signed payloads so third parties
+    can verify
+
+10.6.3 Transparency
+
+-   Public key registry: device public keys published openly
+-   Report format documented (anyone can write a verifier)
+-   Optional: publish to an append-only log (e.g., a public Git
+    repo of signed reports, or a simple Merkle tree for tamper
+    evidence)
+
+Deliverable: public website where anyone can see live entropy
+reports and independently verify their authenticity.
+
+  -----------------------------------------------
+  10.7 Phase 7: Field Testing and Validation
+  -----------------------------------------------
+
+Goal: Prove the system works in real deployment conditions.
+
+10.7.1 Test deployment
+
+-   Deploy 1-2 units in target environment (rooftop, field)
+-   Run for 4+ weeks continuously
+-   Monitor: uptime, entropy quality, battery/solar balance,
+    cellular reliability, report gap rate
+
+10.7.2 Entropy validation
+
+-   Collect large sample set (10,000+ reports)
+-   Run NIST SP 800-90B full test suite offline on collected
+    raw data
+-   Compare on-device min-entropy estimates against offline
+    analysis
+-   Verify no systematic bias or degradation over time
+
+10.7.3 Environmental stress
+
+-   Test in rain, direct sun, temperature extremes
+    (Spanish summer)
+-   Verify enclosure seal holds
+-   Verify antenna performance at deployment distances
+
+Deliverable: confidence that the system works reliably in the
+field, with data to prove it.
+
+  ----------------------------------------
+  10.8 Phase Ordering and Dependencies
+  ----------------------------------------
+
+Phase 1 (Breadboard Firmware)
+    |
+    +---> Phase 2 (Backend Server)     — parallel with Phase 1
+    |         |
+    |         +---> Phase 6 (Dashboard) — after backend works
+    |
+    +---> Phase 3 (Custom PCB)         — after firmware is stable
+              |
+              +---> Phase 4 (Enclosure) — after PCB dims are known
+                        |
+                        +---> Phase 5 (Firmware Hardening)
+                                  |
+                                  +---> Phase 7 (Field Testing)
+
+Phases 1 and 2 can run in parallel. Phase 6 follows Phase 2.
+Phases 3-5 are sequential. Phase 7 is last.
+
+  ----------------------------------------
+  10.9 Estimated Cost Per Unit (1-10 scale)
+  ----------------------------------------
+
+Custom PCB (fab + assembly) ............. 15-25 EUR
+STM32L432KCU6 ........................... 5 EUR
+SIM7080G module ......................... 15-20 EUR
+ADXL345 + BH1750 ........................ 3-5 EUR
+Power management ICs .................... 3-5 EUR
+LiPo battery (3000 mAh) ................ 8-12 EUR
+Solar panel (5V/2W) ..................... 8-12 EUR
+Antenna ................................. 5-8 EUR
+Enclosure + hardware .................... 10-15 EUR
+1NCE SIM (10-year plan) ................. 13 EUR
+Misc (connectors, caps, etc.) ........... 5 EUR
+                                          -----------
+Total per unit .......................... ~90-120 EUR
+
+Server hosting: ~5-10 EUR/month (small VPS).
+
