@@ -18,7 +18,7 @@ port = sys.argv[1] if len(sys.argv) > 1 else "/dev/tty.usbmodem14303"
 outfile = sys.argv[2] if len(sys.argv) > 2 else "entropy.bin"
 
 ser = serial.Serial(port, 115200, timeout=1)
-pat = re.compile(r"([0-9a-f]{64})\s*$")
+pat = re.compile(r"^(?:  >> \[#\d+\]: )?([0-9a-f]{64})\s*$")
 
 print(f"Listening on {port}, writing to {outfile}")
 print("Press Ctrl-C to stop.\n")
