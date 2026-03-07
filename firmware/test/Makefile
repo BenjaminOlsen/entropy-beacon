@@ -7,7 +7,7 @@ TESTS = test_entropy
 all: $(TESTS:%=$(BUILD)/%) run
 
 $(BUILD)/test_entropy: test_entropy.c ../src/entropy/entropy.c | $(BUILD)
-	$(CC) $(CFLAGS) $^ -o $@
+	$(CC) $(CFLAGS) $^ -lm -o $@
 
 $(BUILD):
 	mkdir -p $@

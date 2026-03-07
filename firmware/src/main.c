@@ -1,19 +1,31 @@
 /*
- * REB-01 Remote Entropy Beacon - Sensor Readout
+ * REB-01 Remote Entropy Beacon - Entropy Pipeline
  *
- * Initializes I2C1, reads ADXL345 accelerometer and BH1750 light
- * sensor, and blinks the LED. Sensor values can be inspected via
- * debugger (live watch on accel_data and lux).
+ * Collects accelerometer bursts, extracts entropy bits via delta-sign,
+ * runs health tests (RCT/APT), estimates min-entropy (MCV), and
+ * prints results over UART.
  */
 
 #include "stm32l4xx_hal.h"
 #include "adxl345.h"
 #include "bh1750.h"
 #include "uart.h"
+#include "entropy/entropy.h"
 #include <stdio.h>
+#include <string.h>
 
 #define LED_PIN    GPIO_PIN_3
 #define LED_PORT   GPIOB
+
+/* Burst size: 64 accel samples -> 63 delta-sign bits per axis */
+#define ACCEL_BURST   64
+#define BITS_PER_AXIS (ACCEL_BURST - 1)
+#define TOTAL_BITS    (BITS_PER_AXIS * 3)  /* X + Y + Z */
+
+/* Health test thresholds (for binary source, per NIST SP 800-90B) */
+#define RCT_CUTOFF  20   /* 20 identical bits in a row = fail */
+#define APT_WINDOW  64
+#define APT_CUTOFF  48   /* >48 of 64 same as ref = fail */
 
 static I2C_HandleTypeDef hi2c1;
 
@@ -21,10 +33,6 @@ static void SystemClock_Config(void);
 static void GPIO_Init(void);
 static void I2C1_Init(void);
 static void Error_Handler(void);
-
-/* Sensor data — inspect via debugger */
-volatile adxl345_data_t accel_data;
-volatile uint16_t lux;
 
 int main(void)
 {
@@ -50,25 +58,78 @@ int main(void)
     }
     uart_puts("BH1750 ok\r\n");
 
-    char buf[80];
+    /* Health test state */
+    entropy_rct_t rct;
+    entropy_apt_t apt;
+    entropy_rct_init(&rct, RCT_CUTOFF);
+    entropy_apt_init(&apt, APT_WINDOW, APT_CUTOFF);
+
+    char buf[120];
+    uint32_t cycle = 0;
 
     while (1)
     {
-        adxl345_data_t ad;
-        uint16_t lx;
+        /* Collect a burst of accelerometer samples */
+        int16_t samples_x[ACCEL_BURST];
+        int16_t samples_y[ACCEL_BURST];
+        int16_t samples_z[ACCEL_BURST];
 
-        if (adxl345_read(&hi2c1, &ad) == HAL_OK)
-            accel_data = ad;
+        for (int i = 0; i < ACCEL_BURST; i++) {
+            adxl345_data_t ad;
+            if (adxl345_read(&hi2c1, &ad) == HAL_OK) {
+                samples_x[i] = ad.x;
+                samples_y[i] = ad.y;
+                samples_z[i] = ad.z;
+            }
+            HAL_Delay(5);  /* ~200 Hz */
+        }
 
-        if (bh1750_read(&hi2c1, &lx) == HAL_OK)
-            lux = lx;
+        /* Read light sensor once per burst */
+        uint16_t lx = 0;
+        bh1750_read(&hi2c1, &lx);
 
-        snprintf(buf, sizeof(buf), "X:%6d Y:%6d Z:%6d  lux:%5u\r\n",
-                 accel_data.x, accel_data.y, accel_data.z, lux);
+        /* Extract delta-sign bits from each axis */
+        uint8_t bits[TOTAL_BITS];
+        size_t n = 0;
+        n += entropy_delta_sign(samples_x, ACCEL_BURST, &bits[n], BITS_PER_AXIS);
+        n += entropy_delta_sign(samples_y, ACCEL_BURST, &bits[n], BITS_PER_AXIS);
+        n += entropy_delta_sign(samples_z, ACCEL_BURST, &bits[n], BITS_PER_AXIS);
+
+        /* Run health tests on extracted bits */
+        int rct_fail = 0;
+        int apt_fail = 0;
+        for (size_t i = 0; i < n; i++) {
+            if (entropy_rct_update(&rct, bits[i])) {
+                rct_fail = 1;
+            }
+            if (entropy_apt_update(&apt, bits[i])) {
+                apt_fail = 1;
+            }
+        }
+
+        /* Estimate min-entropy */
+        uint32_t h_milli = entropy_mcv_estimate(bits, n);
+
+        /* Last sample as representative accel reading */
+        int16_t last_x = samples_x[ACCEL_BURST - 1];
+        int16_t last_y = samples_y[ACCEL_BURST - 1];
+        int16_t last_z = samples_z[ACCEL_BURST - 1];
+
+        /* Print results */
+        snprintf(buf, sizeof(buf),
+                 "[%lu] X:%d Y:%d Z:%d lux:%u | bits:%u h:%lu.%03lu rct:%s apt:%s\r\n",
+                 (unsigned long)cycle,
+                 (int)last_x, (int)last_y, (int)last_z,
+                 (unsigned)lx,
+                 (unsigned)n,
+                 (unsigned long)(h_milli / 1000),
+                 (unsigned long)(h_milli % 1000),
+                 rct_fail ? "FAIL" : "ok",
+                 apt_fail ? "FAIL" : "ok");
         uart_puts(buf);
 
         HAL_GPIO_TogglePin(LED_PORT, LED_PIN);
-        HAL_Delay(100);
+        cycle++;
     }
 }
 
@@ -93,8 +154,9 @@ static void SystemClock_Config(void)
     RCC_OscInitStruct.PLL.PLLQ = RCC_PLLQ_DIV2;
     RCC_OscInitStruct.PLL.PLLR = RCC_PLLR_DIV2;
 
-    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+    if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK) {
         Error_Handler();
+    }
 
     RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK
                                 | RCC_CLOCKTYPE_PCLK1 | RCC_CLOCKTYPE_PCLK2;
@@ -103,8 +165,9 @@ static void SystemClock_Config(void)
     RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
     RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
 
-    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK)
+    if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_4) != HAL_OK) {
         Error_Handler();
+    }
 }
 
 /*
@@ -150,14 +213,15 @@ static void I2C1_Init(void)
     hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
     hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
 
-    if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+    if (HAL_I2C_Init(&hi2c1) != HAL_OK) {
         Error_Handler();
+    }
 }
 
 static void Error_Handler(void)
 {
     while (1) {
         HAL_GPIO_TogglePin(LED_PORT, LED_PIN);
-        for (volatile uint32_t i = 0; i < 200000; i++);
+        for (volatile uint32_t i = 0; i < 200000; i++) {}
     }
 }

@@ -30,7 +30,8 @@ C_SOURCES = \
     src/system_stm32l4xx.c \
     src/adxl345.c \
     src/bh1750.c \
-    src/uart.c
+    src/uart.c \
+    src/entropy/entropy.c
 
 # Sources — HAL (only what we need)
 C_SOURCES += \
