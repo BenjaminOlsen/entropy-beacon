@@ -60,6 +60,16 @@ Exit screen: `Ctrl-A` then `K`, confirm with `Y`.
 
 Press the **reset button** on the Nucleo to see boot messages from the beginning.
 
+## Capture Entropy
+
+Record conditioned output to a binary file (requires `pip install pyserial`):
+
+```
+python3 firmware/tools/capture.py /dev/tty.usbmodem<TAB> entropy.bin
+```
+
+Use `make flash-verbose` to see per-burst diagnostics while capturing.
+
 ## Debug
 
 ```
