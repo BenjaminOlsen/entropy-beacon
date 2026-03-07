@@ -31,7 +31,8 @@ C_SOURCES = \
     src/adxl345.c \
     src/bh1750.c \
     src/uart.c \
-    src/entropy/entropy.c
+    src/entropy/entropy.c \
+    $(CFX_DIR)/src/crypto/sha256.c
 
 # Sources — HAL (only what we need)
 C_SOURCES += \
@@ -69,8 +70,11 @@ FPU    = -mfpu=fpv4-sp-d16
 FLOAT  = -mfloat-abi=hard
 MCU    = $(CPU) -mthumb $(FPU) $(FLOAT)
 
+# Verbose mode (set to 1 for debug output over UART)
+VERBOSE ?= 0
+
 # C flags
-CFLAGS  = $(MCU) $(C_INCLUDES) -DSTM32L432xx -DUSE_HAL_DRIVER
+CFLAGS  = $(MCU) $(C_INCLUDES) -DSTM32L432xx -DUSE_HAL_DRIVER -DVERBOSE=$(VERBOSE)
 CFLAGS += -Wall -Wextra -Og -g -gdwarf-2
 CFLAGS += -fdata-sections -ffunction-sections
 CFLAGS += -std=c11
@@ -124,6 +128,11 @@ flash: $(BUILD_DIR)/$(TARGET).bin
 	openocd -f interface/stlink.cfg -f target/stm32l4x.cfg \
 		-c "program $(BUILD_DIR)/$(TARGET).bin 0x08000000 verify reset exit"
 
+flash-verbose:
+	$(MAKE) clean
+	$(MAKE) VERBOSE=1
+	$(MAKE) flash
+
 debug: $(BUILD_DIR)/$(TARGET).elf
 	openocd -f interface/stlink.cfg -f target/stm32l4x.cfg &
 	$(PREFIX)gdb -ex "target remote :3333" -ex "monitor reset halt" $<
@@ -135,4 +144,4 @@ debug: $(BUILD_DIR)/$(TARGET).elf
 clean:
 	rm -rf $(BUILD_DIR)
 
-.PHONY: all clean flash debug
+.PHONY: all clean flash flash-verbose debug

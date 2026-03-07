@@ -17,10 +17,12 @@
 #define LED_PIN    GPIO_PIN_3
 #define LED_PORT   GPIOB
 
-/* Burst size: 64 accel samples -> 63 delta-sign bits per axis */
-#define ACCEL_BURST   64
-#define BITS_PER_AXIS (ACCEL_BURST - 1)
-#define TOTAL_BITS    (BITS_PER_AXIS * 3)  /* X + Y + Z */
+/* Burst sizes */
+#define ACCEL_BURST    64
+#define LUX_BURST      8    /* ~1 reading per 40ms, 8 over the accel burst */
+#define ACCEL_BITS     (ACCEL_BURST - 1)   /* 63 delta-sign bits per axis */
+#define LUX_BITS       (LUX_BURST - 1)     /* 7 delta-sign bits from lux */
+#define TOTAL_BITS     (ACCEL_BITS * 3 + LUX_BITS)  /* 189 + 7 = 196 */
 
 /* Health test thresholds (for binary source, per NIST SP 800-90B) */
 #define RCT_CUTOFF  20   /* 20 identical bits in a row = fail */
@@ -64,15 +66,25 @@ int main(void)
     entropy_rct_init(&rct, RCT_CUTOFF);
     entropy_apt_init(&apt, APT_WINDOW, APT_CUTOFF);
 
-    char buf[120];
+    /* Entropy pool — accumulates until we have 256 bits of real entropy */
+    entropy_pool_t pool;
+    entropy_pool_init(&pool);
+
+    char buf[140];
     uint32_t cycle = 0;
+    uint32_t output_count = 0;
 
     while (1)
     {
-        /* Collect a burst of accelerometer samples */
+#if VERBOSE
+        uint32_t t_start = HAL_GetTick();
+#endif
+        /* Collect a burst of accelerometer + lux samples */
         int16_t samples_x[ACCEL_BURST];
         int16_t samples_y[ACCEL_BURST];
         int16_t samples_z[ACCEL_BURST];
+        uint16_t samples_lux[LUX_BURST];
+        int lux_idx = 0;
 
         for (int i = 0; i < ACCEL_BURST; i++) {
             adxl345_data_t ad;
@@ -81,19 +93,26 @@ int main(void)
                 samples_y[i] = ad.y;
                 samples_z[i] = ad.z;
             }
+
+            /* Read lux every 8th accel sample (~40ms apart) */
+            if (i % (ACCEL_BURST / LUX_BURST) == 0 && lux_idx < LUX_BURST) {
+                uint16_t lx;
+                if (bh1750_read(&hi2c1, &lx) == HAL_OK) {
+                    samples_lux[lux_idx] = lx;
+                }
+                lux_idx++;
+            }
+
             HAL_Delay(5);  /* ~200 Hz */
         }
 
-        /* Read light sensor once per burst */
-        uint16_t lx = 0;
-        bh1750_read(&hi2c1, &lx);
-
-        /* Extract delta-sign bits from each axis */
+        /* Extract delta-sign bits from accel axes + lux */
         uint8_t bits[TOTAL_BITS];
         size_t n = 0;
-        n += entropy_delta_sign(samples_x, ACCEL_BURST, &bits[n], BITS_PER_AXIS);
-        n += entropy_delta_sign(samples_y, ACCEL_BURST, &bits[n], BITS_PER_AXIS);
-        n += entropy_delta_sign(samples_z, ACCEL_BURST, &bits[n], BITS_PER_AXIS);
+        n += entropy_delta_sign(samples_x, ACCEL_BURST, &bits[n], ACCEL_BITS);
+        n += entropy_delta_sign(samples_y, ACCEL_BURST, &bits[n], ACCEL_BITS);
+        n += entropy_delta_sign(samples_z, ACCEL_BURST, &bits[n], ACCEL_BITS);
+        n += entropy_delta_sign_u16(samples_lux, lux_idx, &bits[n], LUX_BITS);
 
         /* Run health tests on extracted bits */
         int rct_fail = 0;
@@ -107,26 +126,57 @@ int main(void)
             }
         }
 
-        /* Estimate min-entropy */
         uint32_t h_milli = entropy_mcv_estimate(bits, n);
+#if VERBOSE
+        /* Estimate min-entropy */
+        uint32_t burst_entropy = (uint32_t)n * h_milli;
 
-        /* Last sample as representative accel reading */
+        /* Last samples as representative readings */
         int16_t last_x = samples_x[ACCEL_BURST - 1];
         int16_t last_y = samples_y[ACCEL_BURST - 1];
         int16_t last_z = samples_z[ACCEL_BURST - 1];
+        uint16_t last_lux = (lux_idx > 0) ? samples_lux[lux_idx - 1] : 0;
 
-        /* Print results */
+        uint32_t t_ms = HAL_GetTick() - t_start;
+
         snprintf(buf, sizeof(buf),
-                 "[%lu] X:%d Y:%d Z:%d lux:%u | bits:%u h:%lu.%03lu rct:%s apt:%s\r\n",
+                 "[%lu] X:%d Y:%d Z:%d lux:%u | bits:%u h:%lu.%03lu ent:%lu.%03lu rct:%s apt:%s pool:%lu %lums\r\n",
                  (unsigned long)cycle,
                  (int)last_x, (int)last_y, (int)last_z,
-                 (unsigned)lx,
+                 (unsigned)last_lux,
                  (unsigned)n,
                  (unsigned long)(h_milli / 1000),
                  (unsigned long)(h_milli % 1000),
+                 (unsigned long)(burst_entropy / 1000),
+                 (unsigned long)(burst_entropy % 1000),
                  rct_fail ? "FAIL" : "ok",
-                 apt_fail ? "FAIL" : "ok");
+                 apt_fail ? "FAIL" : "ok",
+                 (unsigned long)pool.accum_millibits,
+                 (unsigned long)t_ms);
         uart_puts(buf);
+#endif
+
+        /* bits into pool (skip if health tests failed) */
+        if (!rct_fail && !apt_fail) {
+            int ready = entropy_pool_feed(&pool, bits, n, h_milli);
+
+            if (ready) {
+                uint8_t conditioned[32];
+                if (entropy_pool_output(&pool, conditioned) == 0) {
+                    output_count++;
+#if VERBOSE
+                    snprintf(buf, sizeof(buf), "  >> [#%lu]: ", (unsigned long)output_count);
+                    uart_puts(buf);
+#endif
+                    /* Print 32 bytes as hex */
+                    for (int i = 0; i < 32; i++) {
+                        snprintf(buf, sizeof(buf), "%02x", conditioned[i]);
+                        uart_puts(buf);
+                    }
+                    uart_puts("\r\n");
+                }
+            }
+        }
 
         HAL_GPIO_TogglePin(LED_PORT, LED_PIN);
         cycle++;

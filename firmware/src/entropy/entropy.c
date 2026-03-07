@@ -1,8 +1,29 @@
 #include "entropy.h"
 #include <math.h>
+#include <string.h>
+#include <cfx/sha256.h>
 
 size_t entropy_delta_sign(const int16_t *samples, size_t n_samples,
                           uint8_t *out_bits, size_t out_cap)
+{
+    if (n_samples < 2) {
+        return 0;
+    }
+
+    size_t n_bits = n_samples - 1;
+    if (n_bits > out_cap) {
+        n_bits = out_cap;
+    }
+
+    for (size_t i = 0; i < n_bits; i++) {
+        out_bits[i] = (samples[i + 1] > samples[i]) ? 1 : 0;
+    }
+
+    return n_bits;
+}
+
+size_t entropy_delta_sign_u16(const uint16_t *samples, size_t n_samples,
+                              uint8_t *out_bits, size_t out_cap)
 {
     if (n_samples < 2) {
         return 0;
@@ -96,4 +117,42 @@ int entropy_apt_update(entropy_apt_t *apt, uint8_t bit)
     }
 
     return failed;
+}
+
+void entropy_pool_init(entropy_pool_t *pool)
+{
+    pool->n_bits = 0;
+    pool->accum_millibits = 0;
+    memset(pool->data, 0, sizeof(pool->data));
+}
+
+int entropy_pool_feed(entropy_pool_t *pool, const uint8_t *bits,
+                      size_t n_bits, uint32_t h_millebits_per_bit)
+{
+    for (size_t i = 0; i < n_bits; i++) {
+        if (pool->n_bits < ENTROPY_POOL_CAP) {
+            pool->data[pool->n_bits / 8] |= (bits[i] << (7 - (pool->n_bits % 8)));
+            pool->n_bits++;
+        }
+    }
+    pool->accum_millibits += (uint32_t)n_bits * h_millebits_per_bit;
+
+    return (pool->accum_millibits >= ENTROPY_TARGET_MILLIBITS) ? 1 : 0;
+}
+
+int entropy_pool_output(entropy_pool_t *pool, uint8_t out[32])
+{
+    if (pool->accum_millibits < ENTROPY_TARGET_MILLIBITS) {
+        return -1;
+    }
+
+    size_t packed_len = (pool->n_bits + 7) / 8;
+    cfx_sha256(out, pool->data, packed_len);
+
+    /* Reset pool */
+    pool->n_bits = 0;
+    pool->accum_millibits = 0;
+    memset(pool->data, 0, sizeof(pool->data));
+
+    return 0;
 }

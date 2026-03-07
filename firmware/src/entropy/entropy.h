@@ -4,6 +4,39 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Security target in millebits (256 bits = 256000) */
+#define ENTROPY_TARGET_MILLIBITS  256000
+
+/*
+ * Entropy pool — accumulates raw bits and tracks estimated entropy.
+ * When accumulated entropy exceeds the target (256 bits), conditioning
+ * with SHA-256 produces a 32-byte output.
+ */
+#define ENTROPY_POOL_CAP  512  /* max raw bits to buffer */
+
+typedef struct {
+    uint8_t  data[ENTROPY_POOL_CAP / 8];  /* packed bits */
+    size_t   n_bits;             /* number of raw bits in pool */
+    uint32_t accum_millibits;    /* accumulated entropy estimate */
+} entropy_pool_t;
+
+void entropy_pool_init(entropy_pool_t *pool);
+
+/*
+ * Feed raw bits into the pool along with their per-bit min-entropy
+ * estimate (in millebits). Returns 1 if the pool has enough entropy
+ * to produce conditioned output, 0 otherwise.
+ */
+int entropy_pool_feed(entropy_pool_t *pool, const uint8_t *bits,
+                      size_t n_bits, uint32_t h_millebits_per_bit);
+
+/*
+ * Condition the pool contents with SHA-256 and write 32 bytes to out.
+ * Resets the pool. Returns 0 on success, -1 if not enough entropy
+ * has been accumulated.
+ */
+int entropy_pool_output(entropy_pool_t *pool, uint8_t out[32]);
+
 /*
  * Delta-sign bit extraction.
  * Given a buffer of raw sensor samples, extract one bit per consecutive
@@ -12,6 +45,10 @@
  */
 size_t entropy_delta_sign(const int16_t *samples, size_t n_samples,
                           uint8_t *out_bits, size_t out_cap);
+
+/* Same as above but for unsigned 16-bit samples (e.g. lux readings). */
+size_t entropy_delta_sign_u16(const uint16_t *samples, size_t n_samples,
+                              uint8_t *out_bits, size_t out_cap);
 
 /*
  * Most Common Value (MCV) min-entropy estimator.

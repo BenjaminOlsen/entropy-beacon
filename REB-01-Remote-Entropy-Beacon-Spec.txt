@@ -393,7 +393,162 @@ The device must:
 9.  Transmit JSON report over cellular
 
   -----------------------------------------------
-  6. Development Tools Required (Software Only)
+  6. Entropy Pipeline: How It Works
+  -----------------------------------------------
+
+The entropy pipeline transforms raw sensor readings into
+cryptographically usable random bytes. This section explains each
+stage in detail.
+
+6.1 Delta-Sign Bit Extraction
+
+The accelerometer produces a stream of signed 16-bit values for each
+axis (X, Y, Z). The delta-sign method extracts one bit of entropy
+from each consecutive pair of samples by asking a single question:
+"Did the value go up?"
+
+    Reading 1:  200
+    Reading 2:  203   →  went UP     →  bit = 1
+    Reading 3:  201   →  went DOWN   →  bit = 0
+    Reading 4:  205   →  went UP     →  bit = 1
+    Reading 5:  205   →  stayed SAME →  bit = 0
+
+Five readings produce four bits: 1, 0, 1, 0.
+
+The intuition: whether a physical measurement ticks up or down at the
+least significant digits is driven by thermal noise, micro-vibrations,
+and other genuinely unpredictable physical processes. The magnitude of
+the reading doesn't matter — only the direction of change.
+
+The firmware collects bursts of 64 accelerometer samples at ~200 Hz:
+
+-   64 samples → 63 comparisons → 63 bits per axis
+-   3 axes (X, Y, Z) independently → 63 × 3 = 189 bits
+-   8 light sensor samples interleaved → 7 additional bits
+-   Total: 196 candidate bits per burst
+
+The same method is applied to the BH1750 light sensor. Variations in
+ambient light (flickering, passing clouds, reflections) produce
+unpredictable LSB changes between consecutive readings.
+
+6.2 Min-Entropy Estimation (Most Common Value)
+
+The raw bits are not perfectly uniform — they may be biased (e.g.,
+55% zeros, 45% ones). The MCV estimator measures how much real
+unpredictability is present.
+
+Step 1: Find the most common value's probability.
+
+    Example: 196 bits, 110 are 0, 86 are 1.
+    p_max = 110 / 196 = 0.561
+
+Step 2: Compute min-entropy per bit.
+
+    h = -log2(p_max) = -log2(0.561) = 0.834 bits
+
+This answers: "If an attacker always guesses the most likely value,
+how many bits of surprise do they still face per sample?"
+
+Reference values:
+-   p_max = 0.50 (perfect coin):   h = 1.000 — full bit of entropy
+-   p_max = 0.75 (biased coin):    h = 0.415 — less than half a bit
+-   p_max = 1.00 (always same):    h = 0.000 — no entropy at all
+
+Step 3: Compute total usable entropy in the burst.
+
+    196 bits × 0.834 bits/bit = 163.4 bits of real entropy
+
+The remaining 196 - 163.4 = 32.6 bits are pattern — the bias toward
+zero that an attacker could exploit. The MCV estimator is conservative:
+it uses min-entropy (worst-case for the attacker's best single guess)
+rather than Shannon entropy (average-case), because an attacker
+doesn't care about averages.
+
+The firmware represents min-entropy in "millebits" (thousandths of a
+bit) to avoid floating point on the microcontroller. So h = 0.834 is
+stored as 834 millebits.
+
+6.3 Health Tests (NIST SP 800-90B)
+
+Before using entropy bits, two continuous health tests verify the
+source isn't broken:
+
+Repetition Count Test (RCT): Detects a stuck source. If the same
+bit value repeats more than a threshold number of times in a row
+(e.g., 20), the test fails. This catches a dead sensor, a shorted
+wire, or any fault that causes the output to freeze.
+
+Adaptive Proportion Test (APT): Detects bias in a sliding window.
+Within each window of 64 consecutive bits, if one value appears more
+than a threshold number of times (e.g., 48 out of 64), the test
+fails. This catches a source that still varies but is heavily
+skewed.
+
+If either test fails, the burst is discarded and its bits are not
+fed into the entropy pool. The failure is reported in the UART
+debug output and would be included in the signed report.
+
+6.4 Entropy Accumulation
+
+Not every burst contains enough entropy for a full output. The
+firmware maintains an entropy pool that accumulates bits across
+bursts and tracks the total estimated real entropy:
+
+    accumulated_entropy += burst_bits × h_per_bit
+
+Example with h = 0.834:
+    Burst 1: 196 × 834 = 163,464 millebits (163.4 bits)
+    Burst 2: 196 × 812 = 159,152 millebits (159.2 bits)
+    Total: 322,616 millebits (322.6 bits) — exceeds 256-bit target
+
+The pool only produces output when the accumulated real entropy
+exceeds the security target (256 bits). This guarantees that the
+conditioned output has at least 256 bits of genuine unpredictability,
+regardless of how biased individual bursts are.
+
+If entropy quality is poor (low h), more bursts are needed. For
+example, at h = 0.300, each burst contributes only 196 × 0.3 = 58.8
+bits, so ~5 bursts would be needed to reach 256.
+
+6.5 SHA-256 Conditioning
+
+When the pool has accumulated enough entropy, the raw bits are fed
+through SHA-256 to produce 32 bytes (256 bits) of conditioned output.
+
+Conditioning serves two purposes:
+
+1. It removes bias. Even if the input bits are 55/45 biased, the
+   SHA-256 output is computationally indistinguishable from uniform
+   random — provided the input contained enough real entropy (which
+   the accumulator guarantees).
+
+2. It compresses. The pool may contain 400+ raw bits, but the output
+   is always exactly 32 bytes. The hash cannot create entropy that
+   wasn't in the input, but it can concentrate existing entropy into
+   a smaller, uniform output.
+
+The conditioned output is the entropy product of the device: 32 bytes
+of high-quality randomness suitable for seeding a CSPRNG, generating
+cryptographic keys, or any other application requiring true
+randomness.
+
+6.6 Full Pipeline Summary
+
+    Sensors (ADXL345 + BH1750)
+        ↓ raw 16-bit readings at 200 Hz / 8 Hz
+    Delta-sign extraction
+        ↓ 196 candidate bits per burst
+    Health tests (RCT + APT)
+        ↓ discard burst if failed
+    MCV min-entropy estimation
+        ↓ h millebits per bit
+    Entropy pool accumulation
+        ↓ wait until ≥256 bits of real entropy
+    SHA-256 conditioning
+        ↓ 32 bytes of conditioned output
+
+  -----------------------------------------------
+  7. Development Tools Required (Software Only)
   -----------------------------------------------
 
 Install on laptop:
@@ -403,16 +558,16 @@ Install on laptop:
 -   Serial terminal program (e.g., PuTTY or screen)
 
   ----------------------------------
-  7. Estimated Total Hardware Cost
+  8. Estimated Total Hardware Cost
   ----------------------------------
 
 Approximate range: 90–130 EUR
 
   ----------------------------------
-  8. Security Considerations
+  9. Security Considerations
   ----------------------------------
 
-8.1 Report Integrity and Authenticity (Ed25519 Signing)
+9.1 Report Integrity and Authenticity (Ed25519 Signing)
 
 Every entropy report transmitted by the device is signed using
 Ed25519. This ensures that:
@@ -431,7 +586,7 @@ private key.
 
 ------------------------------------------------------------------------
 
-8.2 Anti-Replay Protection (Monotonic Sequence Numbers)
+9.2 Anti-Replay Protection (Monotonic Sequence Numbers)
 
 Each signed report includes a strictly monotonic sequence number
 in the signed payload. The sequence number:
@@ -448,7 +603,7 @@ replaying it later.
 
 ------------------------------------------------------------------------
 
-8.3 Report Suppression Detection (Server-Side Gap Detection)
+9.3 Report Suppression Detection (Server-Side Gap Detection)
 
 A man-in-the-middle cannot forge or alter signed reports, but they
 can silently drop them. To detect suppression:
@@ -467,7 +622,7 @@ goal is detection, not prevention.
 
 ------------------------------------------------------------------------
 
-8.4 Transport Encryption
+9.4 Transport Encryption
 
 Report confidentiality is a non-goal for the prototype. Entropy
 reports are intended to be publicly verifiable, and the signed
@@ -490,7 +645,7 @@ to post-prototype (see 8.6).
 
 ------------------------------------------------------------------------
 
-8.5 Key Provisioning [TBD]
+9.5 Key Provisioning [TBD]
 
 The Ed25519 signing keypair must be established on the device and
 the corresponding public key must reach verifiers through a trusted
@@ -533,7 +688,7 @@ Decision required before firmware development begins.
 
 ------------------------------------------------------------------------
 
-8.6 Server Authentication [TBD]
+9.6 Server Authentication [TBD]
 
 The device signs its reports, but the prototype does not yet verify
 the identity of the server it transmits to. A man-in-the-middle
@@ -577,7 +732,7 @@ Strategy C — Pre-shared symmetric key (PSK-TLS):
 Decision required before networking implementation begins.
 
   ----------------------------------
-  9. Scope Limitations (Prototype)
+  10. Scope Limitations (Prototype)
   ----------------------------------
 
 -   Not miniaturized
@@ -588,7 +743,7 @@ Decision required before networking implementation begins.
 This is a fully functional entropy beacon core platform.
 
   ============================================================
-  10. Production Roadmap: Prototype to Deployable Product
+  11. Production Roadmap: Prototype to Deployable Product
   ============================================================
 
 Target scale: 1-10 units (personal / research use)
@@ -600,12 +755,12 @@ This section covers the path from "working breadboard" to "deployable
 outdoor product with full-stack infrastructure."
 
   -----------------------------------------------
-  10.1 Phase 1: Breadboard Prototype (Firmware)
+  11.1 Phase 1: Breadboard Prototype (Firmware)
   -----------------------------------------------
 
 Goal: Prove the entropy pipeline works end-to-end on the breadboard.
 
-10.1.1 Bring-up and driver development
+11.1.1 Bring-up and driver development
 
 -   STM32CubeIDE project setup (STM32L432KC target)
 -   I2C driver: ADXL345 (accelerometer, 200 Hz burst sampling)
@@ -613,7 +768,7 @@ Goal: Prove the entropy pipeline works end-to-end on the breadboard.
 -   UART driver: SIM7080G AT command interface
 -   Validate each peripheral independently via serial debug output
 
-10.1.2 Entropy pipeline
+11.1.2 Entropy pipeline
 
 -   Delta-sign bit extraction from accelerometer axes
 -   Timing jitter extraction from sample intervals
@@ -624,7 +779,7 @@ Goal: Prove the entropy pipeline works end-to-end on the breadboard.
 -   JSON report assembly (entropy output, min-entropy estimate,
     health test results, sequence number, timestamp)
 
-10.1.3 Cryptographic signing
+11.1.3 Cryptographic signing
 
 -   Ed25519 implementation (Monocypher or TweetNaCl — both small,
     auditable, no dynamic allocation)
@@ -632,7 +787,7 @@ Goal: Prove the entropy pipeline works end-to-end on the breadboard.
 -   Sequence number: monotonic counter stored in STM32 Flash
     (wear-leveled across a dedicated Flash page)
 
-10.1.4 Cellular transmission
+11.1.4 Cellular transmission
 
 -   SIM7080G modem init (AT command sequence)
 -   Network registration (LTE-M or NB-IoT, configurable)
@@ -642,14 +797,14 @@ Goal: Prove the entropy pipeline works end-to-end on the breadboard.
 -   Retry logic with exponential backoff
 -   Graceful handling of network loss
 
-10.1.5 Resolved spec decisions
+11.1.5 Resolved spec decisions
 
--   Key provisioning (Section 8.5): Strategy B — offline injection.
+-   Key provisioning (Section 9.5): Strategy B — offline injection.
     Generate Ed25519 keypair on an air-gapped laptop, flash private
     key to STM32 via SWD, register public key on server. Simple and
     trustworthy at this scale.
 
--   Server authentication (Section 8.6): Strategy A — certificate
+-   Server authentication (Section 9.6): Strategy A — certificate
     pinning. Pin the server's TLS certificate hash in firmware.
     For 1-10 units, certificate rotation via reflash is acceptable.
 
@@ -661,12 +816,12 @@ Deliverable: breadboard prototype transmitting signed entropy
 reports to a test server over cellular.
 
   ------------------------------------
-  10.2 Phase 2: Backend Server
+  11.2 Phase 2: Backend Server
   ------------------------------------
 
 Goal: Receive, validate, store, and serve entropy reports.
 
-10.2.1 Core server
+11.2.1 Core server
 
 -   Language/framework: Python (FastAPI) or Go — lightweight,
     easy to deploy
@@ -680,14 +835,14 @@ Goal: Receive, validate, store, and serve entropy reports.
 -   Device registry table:
     -   device_id, public_key, last_seq, last_seen
 
-10.2.2 Alerting
+11.2.2 Alerting
 
 -   Gap detection: alert if >3 consecutive reports missed
 -   Health degradation: alert if min-entropy drops below threshold
 -   Device offline: alert if no report received within 3x
     report interval
 
-10.2.3 Deployment
+11.2.3 Deployment
 
 -   VPS in Europe (Hetzner, OVH, or similar — cheap, low latency
     to Spain)
@@ -699,13 +854,13 @@ Deliverable: server accepting and validating reports from the
 breadboard prototype.
 
   ------------------------------------
-  10.3 Phase 3: Custom PCB Design
+  11.3 Phase 3: Custom PCB Design
   ------------------------------------
 
 Goal: Replace the breadboard with a single board designed for the
 enclosure and power system.
 
-10.3.1 Schematic
+11.3.1 Schematic
 
 -   STM32L432KCU6 (QFN-32, same chip as Nucleo but bare)
 -   SIM7080G module (SMD, direct solder)
@@ -714,12 +869,12 @@ enclosure and power system.
 -   SWD header (Tag-Connect TC2030 for small footprint)
 -   Nano-SIM holder
 -   U.FL antenna connector (LTE) + optional GNSS
--   Power management (see 10.3.2)
+-   Power management (see 11.3.2)
 -   ESD protection (TVS diodes on antenna, SIM, SWD, sensor lines)
 -   Decoupling: 100nF + 10uF on each power rail
 -   Test points on key signals (I2C, UART TX/RX, VBAT, VSOLAR)
 
-10.3.2 Power management circuit
+11.3.2 Power management circuit
 
 -   Solar input: 5-6V panel -> charge controller
 -   Charge controller: TP4056 (simple, proven for LiPo) or BQ25504
@@ -742,7 +897,7 @@ Power budget estimate:
 -   2W solar panel in Spain: ~1600-2700 mAh/day harvest ->
     easily net positive
 
-10.3.3 PCB layout
+11.3.3 PCB layout
 
 -   2-layer PCB (sufficient for this complexity)
 -   Board size: target ~60x40 mm
@@ -751,7 +906,7 @@ Power budget estimate:
 -   Fab + assembly: JLCPCB or PCBWay (supports SMD assembly,
     ships to Spain in ~7-10 days, ~$2-5/board at small quantities)
 
-10.3.4 Assembly
+11.3.4 Assembly
 
 -   JLCPCB SMT assembly for main components
 -   Hand-solder any through-hole parts (SMA connector, battery
@@ -761,12 +916,12 @@ Deliverable: assembled custom PCB, tested and running same
 firmware as the breadboard prototype.
 
   ------------------------------------------------
-  10.4 Phase 4: Enclosure and Physical Deployment
+  11.4 Phase 4: Enclosure and Physical Deployment
   ------------------------------------------------
 
 Goal: Outdoor-rated housing with solar panel and mounting.
 
-10.4.1 Enclosure options (1-10 units)
+11.4.1 Enclosure options (1-10 units)
 
 Option A — Off-the-shelf IP65 junction box (~10-15 EUR):
 -   ABS or polycarbonate, ~100x68x50 mm
@@ -783,7 +938,7 @@ Option B — 3D-printed custom enclosure (~5-10 EUR in material):
 
 Recommendation: Option A for first deployments. Less risk.
 
-10.4.2 Solar panel
+11.4.2 Solar panel
 
 -   5V/2W mini solar panel (~8-12 EUR)
 -   Mount on enclosure lid or adjacent bracket
@@ -791,14 +946,14 @@ Recommendation: Option A for first deployments. Less risk.
 -   Conformal coating on PCB for humidity protection (spray-on,
     e.g., MG Chemicals 422B)
 
-10.4.3 Antenna
+11.4.3 Antenna
 
 -   LTE antenna: SMA feedthrough in enclosure wall, external whip
     or patch antenna (the one included with U137 works; for custom
     PCB, source a similar SMA whip antenna)
 -   Placement: vertical orientation, clear of metal obstructions
 
-10.4.4 Mounting
+11.4.4 Mounting
 
 -   Stainless steel hose clamps or DIN rail for pole/mast mounting
 -   Wall mounting: stainless steel brackets + screws
@@ -808,20 +963,20 @@ Deliverable: weatherproof, solar-powered device ready for outdoor
 deployment.
 
   -----------------------------------------------
-  10.5 Phase 5: Production Firmware Hardening
+  11.5 Phase 5: Production Firmware Hardening
   -----------------------------------------------
 
 Goal: Make firmware reliable enough for unattended long-term
 operation.
 
-10.5.1 Watchdog and recovery
+11.5.1 Watchdog and recovery
 
 -   Independent Watchdog (IWDG) — resets MCU if firmware hangs
 -   Save crash info (fault register, PC, LR) to Flash before reset
 -   Boot counter: detect and report repeated resets (brown-out,
     crash loop)
 
-10.5.2 Power management firmware
+11.5.2 Power management firmware
 
 -   STM32 STOP2 mode between sampling intervals (~1.5 uA)
 -   RTC wakeup alarm for next sampling cycle
@@ -830,7 +985,7 @@ operation.
     frequency if battery low, shut down modem if critical)
 -   Solar charge state reporting in entropy reports
 
-10.5.3 OTA firmware update (optional but valuable)
+11.5.3 OTA firmware update (optional but valuable)
 
 -   Dual-bank Flash on STM32L432 (128 KB + 128 KB)
 -   Server pushes firmware image URL in response to report
@@ -840,7 +995,7 @@ operation.
     revert to previous bank
 -   For 1-10 units, SWD reflash is also acceptable as fallback
 
-10.5.4 Entropy quality monitoring
+11.5.4 Entropy quality monitoring
 
 -   Long-running min-entropy trend tracking
 -   Alert (in report metadata) if entropy quality degrades
@@ -851,13 +1006,13 @@ Deliverable: firmware that runs unattended for months, recovers
 from faults, manages power, and reports its own health.
 
   ------------------------------------------------
-  10.6 Phase 6: Public Verification Dashboard
+  11.6 Phase 6: Public Verification Dashboard
   ------------------------------------------------
 
 Goal: Anyone can see the device is working and verify report
 integrity.
 
-10.6.1 Web frontend
+11.6.1 Web frontend
 
 -   Simple static site (HTML/JS) or lightweight framework
     (Svelte, etc.)
@@ -868,7 +1023,7 @@ integrity.
 -   Historical charts: min-entropy over time, report gaps,
     battery trend
 
-10.6.2 Public API
+11.6.2 Public API
 
 -   GET /api/v1/devices — list registered devices
 -   GET /api/v1/devices/{id}/reports — paginated report history
@@ -878,7 +1033,7 @@ integrity.
 -   All responses include raw signed payloads so third parties
     can verify
 
-10.6.3 Transparency
+11.6.3 Transparency
 
 -   Public key registry: device public keys published openly
 -   Report format documented (anyone can write a verifier)
@@ -890,19 +1045,19 @@ Deliverable: public website where anyone can see live entropy
 reports and independently verify their authenticity.
 
   -----------------------------------------------
-  10.7 Phase 7: Field Testing and Validation
+  11.7 Phase 7: Field Testing and Validation
   -----------------------------------------------
 
 Goal: Prove the system works in real deployment conditions.
 
-10.7.1 Test deployment
+11.7.1 Test deployment
 
 -   Deploy 1-2 units in target environment (rooftop, field)
 -   Run for 4+ weeks continuously
 -   Monitor: uptime, entropy quality, battery/solar balance,
     cellular reliability, report gap rate
 
-10.7.2 Entropy validation
+11.7.2 Entropy validation
 
 -   Collect large sample set (10,000+ reports)
 -   Run NIST SP 800-90B full test suite offline on collected
@@ -911,7 +1066,7 @@ Goal: Prove the system works in real deployment conditions.
     analysis
 -   Verify no systematic bias or degradation over time
 
-10.7.3 Environmental stress
+11.7.3 Environmental stress
 
 -   Test in rain, direct sun, temperature extremes
     (Spanish summer)
@@ -922,7 +1077,7 @@ Deliverable: confidence that the system works reliably in the
 field, with data to prove it.
 
   ----------------------------------------
-  10.8 Phase Ordering and Dependencies
+  11.8 Phase Ordering and Dependencies
   ----------------------------------------
 
 Phase 1 (Breadboard Firmware)
@@ -943,7 +1098,7 @@ Phases 1 and 2 can run in parallel. Phase 6 follows Phase 2.
 Phases 3-5 are sequential. Phase 7 is last.
 
   ----------------------------------------
-  10.9 Estimated Cost Per Unit (1-10 scale)
+  11.9 Estimated Cost Per Unit (1-10 scale)
   ----------------------------------------
 
 Custom PCB (fab + assembly) ............. 15-25 EUR
@@ -961,4 +1116,14 @@ Misc (connectors, caps, etc.) ........... 5 EUR
 Total per unit .......................... ~90-120 EUR
 
 Server hosting: ~5-10 EUR/month (small VPS).
+
+  --------
+  12. TODO
+  --------
+
+- Replace HAL_Delay polling in the sample loop with ADXL345 DATA_READY
+  interrupt on INT1. Wire INT1 to a free GPIO, configure EXTI, and
+  read samples in the ISR into a ring buffer. This eliminates ~320ms
+  of busy-waiting per burst and enables sleep between interrupts for
+  lower power consumption.
 
