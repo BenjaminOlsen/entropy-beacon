@@ -21,12 +21,16 @@ CUBE_DIR    = drivers/STM32CubeL4/Drivers
 HAL_DIR     = $(CUBE_DIR)/STM32L4xx_HAL_Driver
 CMSIS_DIR   = $(CUBE_DIR)/CMSIS
 CMSIS_DEV   = $(CMSIS_DIR)/Device/ST/STM32L4xx
+CFX_DIR     = lib/cfx
 
 # Sources — application
 C_SOURCES = \
     src/main.c \
     src/stm32l4xx_it.c \
-    src/system_stm32l4xx.c
+    src/system_stm32l4xx.c \
+    src/adxl345.c \
+    src/bh1750.c \
+    src/uart.c
 
 # Sources — HAL (only what we need)
 C_SOURCES += \
@@ -55,7 +59,8 @@ C_INCLUDES = \
     -Iinclude \
     -I$(HAL_DIR)/Inc \
     -I$(CMSIS_DEV)/Include \
-    -I$(CMSIS_DIR)/Include
+    -I$(CMSIS_DIR)/Include \
+    -I$(CFX_DIR)/include
 
 # MCU flags
 CPU    = -mcpu=cortex-m4

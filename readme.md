@@ -39,6 +39,27 @@ Connect a NUCLEO-L432KC via USB, then:
 make flash
 ```
 
+## Serial Output
+
+The Nucleo's ST-Link provides a virtual COM port over the same USB cable used for flashing. Firmware prints sensor readings to USART2 (PA2 TX / PA15 RX) at 115200 baud.
+
+Check the board is connected:
+
+```
+system_profiler SPUSBDataType | grep -A5 "STLink"
+ls /dev/tty.usbmodem*
+```
+
+Open the serial console:
+
+```
+screen /dev/tty.usbmodem<TAB> 115200
+```
+
+Exit screen: `Ctrl-A` then `K`, confirm with `Y`.
+
+Press the **reset button** on the Nucleo to see boot messages from the beginning.
+
 ## Debug
 
 ```
@@ -46,6 +67,15 @@ make debug
 ```
 
 Starts OpenOCD and connects GDB.
+
+## Tests
+
+Pure logic (entropy pipeline, health tests, etc.) is tested natively on the host:
+
+```
+cd firmware/test
+make
+```
 
 ## Project Structure
 

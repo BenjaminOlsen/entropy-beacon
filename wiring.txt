@@ -1,0 +1,87 @@
+REB-01 Breadboard Wiring
+========================
+
+Components:
+  - NUCLEO-L432KC
+  - ADXL345 accelerometer breakout (I2C)
+  - BH1750 light sensor breakout (I2C)
+  - 2x 100nF ceramic capacitors (decoupling)
+
+I2C Bus: I2C1 on PB6 (SCL) and PB7 (SDA)
+         Nucleo header pins D5 (SCL) and D4 (SDA)
+
+I2C Addresses: ADXL345 = 0x53, BH1750 = 0x23
+
+
+Nucleo Pin Connections
+----------------------
+
+  Nucleo Pin      Connects to
+  ----------      -----------
+  3.3V            ADXL345 VCC, BH1750 VCC, ADXL345 CS
+  GND             ADXL345 GND, BH1750 GND, ADXL345 SDO, BH1750 ADDR
+  D5 (PB6/SCL)    ADXL345 SCL, BH1750 SCL
+  D4 (PB7/SDA)    ADXL345 SDA, BH1750 SDA
+
+
+ADXL345 Breakout
+----------------
+
+  Pin     Connect to      Reason
+  ---     ----------      ------
+  VCC     Nucleo 3.3V     Power
+  GND     Nucleo GND      Ground
+  CS      Nucleo 3.3V     High = I2C mode (not SPI)
+  SDO     Nucleo GND      Low = I2C address 0x53
+  SCL     Nucleo D5       I2C clock
+  SDA     Nucleo D4       I2C data
+  INT1    (no connect)
+  INT2    (no connect)
+
+
+BH1750 Breakout
+---------------
+
+  Pin     Connect to      Reason
+  ---     ----------      ------
+  VCC     Nucleo 3.3V     Power
+  GND     Nucleo GND      Ground
+  SCL     Nucleo D5       I2C clock
+  SDA     Nucleo D4       I2C data
+  ADDR    Nucleo GND      Low = I2C address 0x23 (may be pulled low on board)
+
+
+Decoupling Capacitors (100nF)
+-----------------------------
+
+  Place one 100nF cap between VCC and GND as close as possible to
+  each breakout board:
+
+    - ADXL345: 100nF across VCC-GND
+    - BH1750:  100nF across VCC-GND
+
+
+I2C Pull-ups
+------------
+
+  Most breakout boards include on-board pull-ups (4.7k or 10k) on
+  SDA and SCL. With two breakouts the effective parallel resistance
+  (~2.35k) is fine for 3.3V I2C at 400 kHz. Do not add extra
+  pull-ups unless neither board has them.
+
+
+Schematic
+---------
+
+  NUCLEO 3.3V --+--- ADXL345 VCC --||-- ADXL345 GND --+-- NUCLEO GND
+                |                100nF                 |
+                +--- ADXL345 CS                        |
+                |                                      |
+                +--- BH1750 VCC  --||-- BH1750 GND  ---+
+                |                100nF                 |
+                |                                      |
+  NUCLEO D5 ----+--- ADXL345 SCL --- BH1750 SCL       |
+  NUCLEO D4 ----+--- ADXL345 SDA --- BH1750 SDA       |
+                                                       |
+                ADXL345 SDO ---------------------------+
+                BH1750 ADDR ---------------------------+

@@ -327,9 +327,9 @@ Requirements:
 2.4 Entropy Sensors
 
 Accelerometer:
--   LIS3DH breakout board OR ADXL345 breakout board
--   Must support I2C
--   Must operate at 3.3V
+-   ADXL345 breakout board
+-   I2C interface
+-   3.3V compatible
 
 Light Sensor:
 -   BH1750 (I2C digital lux sensor)
@@ -347,8 +347,9 @@ Core System:
 -   1× 1NCE IoT SIM card
 
 Entropy Sensors:
--   1× LIS3DH breakout board (or ADXL345)
+-   1× ADXL345 accelerometer breakout board
 -   1× BH1750 light sensor module
+-   2× 100nF ceramic capacitors (decoupling, one per sensor)
 
 Prototyping Materials:
 -   1× Medium solderless breadboard
