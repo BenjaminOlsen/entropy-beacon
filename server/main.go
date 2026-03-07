@@ -21,6 +21,8 @@ func main() {
 	mux.HandleFunc("/api/ingest", handleIngest(store))
 	mux.HandleFunc("/api/entropy", handleEntropy(store))
 	mux.HandleFunc("/api/status", handleStatus(store))
+	mux.HandleFunc("/api/quality", handleQuality(store))
+	mux.HandleFunc("/api/reset", handleReset(store))
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 
 	log.Printf("listening on %s", *addr)

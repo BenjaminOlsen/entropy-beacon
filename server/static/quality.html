@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entropy Quality</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #e0e0e0; padding: 2rem; max-width: 900px; margin: 0 auto; }
+  h1 { color: #00ff88; margin-bottom: 0.5rem; font-size: 1.4rem; }
+  a { color: #00ff88; }
+  .nav { margin-bottom: 1.5rem; font-size: 0.85rem; }
+  .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 1rem; margin-bottom: 1rem; }
+  .panel h2 { color: #888; font-size: 0.85rem; text-transform: uppercase; margin-bottom: 0.75rem; }
+  .stat { display: flex; justify-content: space-between; padding: 0.25rem 0; }
+  .stat .label { color: #888; }
+  .stat .value { color: #00ff88; }
+  .stat .value.warn { color: #ffaa00; }
+  .stat .value.bad { color: #ff4444; }
+  canvas { display: block; image-rendering: pixelated; }
+  #bitmap-canvas { border: 1px solid #333; width: 100%; }
+  #histo-canvas { width: 100%; height: 200px; }
+  .empty { color: #666; text-align: center; padding: 2rem; }
+  button { background: #00ff88; color: #0a0a0a; border: none; padding: 0.4rem 1rem; font-family: inherit; font-size: 0.85rem; font-weight: bold; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #00cc6e; }
+  .panel-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+  .panel-head h2 { margin-bottom: 0; }
+</style>
+</head>
+<body>
+<h1>&gt; entropy quality</h1>
+<div class="nav"><a href="/">&lt; dashboard</a> · <a href="/nutz.html">nutz mode</a></div>
+
+<div class="panel">
+  <div class="panel-head">
+    <h2>Statistics</h2>
+    <button onclick="resetData()">Reset</button>
+  </div>
+  <div id="stats" class="empty">Loading...</div>
+</div>
+
+<div class="panel">
+  <h2>Bit Bitmap</h2>
+  <p style="color:#666;font-size:0.75rem;margin-bottom:0.5rem;">Each pixel = 1 bit. White = 1, black = 0. Should look like uniform static.</p>
+  <canvas id="bitmap-canvas"></canvas>
+</div>
+
+<div class="panel">
+  <h2>Byte Frequency Histogram</h2>
+  <p style="color:#666;font-size:0.75rem;margin-bottom:0.5rem;">Frequency of each byte value (0-255). Should be roughly flat.</p>
+  <canvas id="histo-canvas"></canvas>
+</div>
+
+<script>
+async function load() {
+  const r = await fetch('/api/quality');
+  const d = await r.json();
+
+  if (!d.samples) {
+    document.getElementById('stats').textContent = 'No entropy samples yet.';
+    return;
+  }
+
+  // Stats
+  const onesPct = d.ones_pct;
+  const biasClass = Math.abs(onesPct - 50) < 1 ? '' : Math.abs(onesPct - 50) < 2 ? 'warn' : 'bad';
+  const corrAbs = Math.abs(d.serial_correlation);
+  const corrClass = corrAbs < 0.01 ? '' : corrAbs < 0.05 ? 'warn' : 'bad';
+  const pClass = d.chi_squared_pvalue > 0.01 ? '' : d.chi_squared_pvalue > 0.001 ? 'warn' : 'bad';
+
+  document.getElementById('stats').innerHTML = `
+    <div class="stat"><span class="label">Samples</span><span class="value">${d.samples} (${d.total_bits} bits)</span></div>
+    <div class="stat"><span class="label">Bit balance (ones)</span><span class="value ${biasClass}">${onesPct.toFixed(3)}%</span></div>
+    <div class="stat"><span class="label">Chi-squared (byte)</span><span class="value ${pClass}">${d.chi_squared} (p=${d.chi_squared_pvalue})</span></div>
+    <div class="stat"><span class="label">Serial correlation</span><span class="value ${corrClass}">${d.serial_correlation}</span></div>
+  `;
+
+  // Bitmap — fixed width matching panel, grows in height
+  const raw = hexToBytes(d.raw);
+  const totalBits = raw.length * 8;
+  const bmpCanvas = document.getElementById('bitmap-canvas');
+  const panelWidth = bmpCanvas.parentElement.clientWidth - 32;
+  const pixelScale = 2;
+  const width = Math.floor(panelWidth / pixelScale);
+  const height = Math.ceil(totalBits / width);
+  bmpCanvas.width = width;
+  bmpCanvas.height = height;
+  bmpCanvas.style.width = (width * pixelScale) + 'px';
+  bmpCanvas.style.height = (height * pixelScale) + 'px';
+  const ctx = bmpCanvas.getContext('2d');
+  const img = ctx.createImageData(width, height);
+
+  let bitIdx = 0;
+  for (let i = 0; i < raw.length && bitIdx < width * height; i++) {
+    for (let b = 7; b >= 0 && bitIdx < width * height; b--, bitIdx++) {
+      const on = (raw[i] >> b) & 1;
+      const px = bitIdx * 4;
+      img.data[px] = img.data[px+1] = img.data[px+2] = on ? 255 : 0;
+      img.data[px+3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // Histogram
+  const freq = d.byte_freq;
+  const hCanvas = document.getElementById('histo-canvas');
+  const dpr = window.devicePixelRatio || 1;
+  const hRect = hCanvas.getBoundingClientRect();
+  hCanvas.width = hRect.width * dpr;
+  hCanvas.height = 200 * dpr;
+  hCanvas.style.height = '200px';
+  const hCtx = hCanvas.getContext('2d');
+  hCtx.scale(dpr, dpr);
+  const w = hRect.width;
+  const h = 200;
+
+  const maxFreq = Math.max(...freq);
+  const expected = raw.length / 256;
+  const barW = w / 256;
+
+  // Expected line
+  const ey = h - (expected / maxFreq) * (h - 10);
+  hCtx.strokeStyle = '#ff4444';
+  hCtx.lineWidth = 1;
+  hCtx.setLineDash([4, 4]);
+  hCtx.beginPath();
+  hCtx.moveTo(0, ey);
+  hCtx.lineTo(w, ey);
+  hCtx.stroke();
+  hCtx.setLineDash([]);
+
+  // Bars
+  for (let i = 0; i < 256; i++) {
+    const barH = (freq[i] / maxFreq) * (h - 10);
+    hCtx.fillStyle = '#00ff88';
+    hCtx.fillRect(i * barW, h - barH, Math.max(barW - 0.5, 1), barH);
+  }
+}
+
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  }
+  return bytes;
+}
+
+async function resetData() {
+  if (!confirm('Delete all stored entropy?')) { return; }
+  try {
+    await fetch('/api/reset', { method: 'POST' });
+    lastSamples = 0;
+    document.getElementById('stats').className = 'empty';
+    document.getElementById('stats').textContent = 'No entropy samples yet.';
+    const bmpCanvas = document.getElementById('bitmap-canvas');
+    bmpCanvas.getContext('2d').clearRect(0, 0, bmpCanvas.width, bmpCanvas.height);
+    bmpCanvas.width = 0; bmpCanvas.height = 0;
+    const hCanvas = document.getElementById('histo-canvas');
+    hCanvas.getContext('2d').clearRect(0, 0, hCanvas.width, hCanvas.height);
+  } catch (e) { /* ignore */ }
+}
+
+let lastSamples = 0;
+
+async function poll() {
+  try {
+    const r = await fetch('/api/status');
+    const s = await r.json();
+    if (s.total_received !== lastSamples) {
+      lastSamples = s.total_received;
+      await load();
+    }
+  } catch (e) { /* ignore */ }
+}
+
+load();
+setInterval(poll, 3000);
+</script>
+</body>
+</html>

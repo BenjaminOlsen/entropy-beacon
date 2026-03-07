@@ -120,3 +120,26 @@ func (s *Store) Status() (*Status, error) {
 
 	return &st, nil
 }
+
+func (s *Store) AllValues() ([][]byte, error) {
+	rows, err := s.db.Query("SELECT value FROM entropy ORDER BY id ASC")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var values [][]byte
+	for rows.Next() {
+		var v []byte
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		values = append(values, v)
+	}
+	return values, rows.Err()
+}
+
+func (s *Store) Reset() error {
+	_, err := s.db.Exec("DELETE FROM entropy")
+	return err
+}
