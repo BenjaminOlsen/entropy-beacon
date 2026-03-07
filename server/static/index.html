@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entropy Beacon</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Courier New', monospace; background: #0a0a0a; color: #e0e0e0; padding: 2rem; max-width: 700px; margin: 0 auto; }
+  h1 { color: #00ff88; margin-bottom: 1.5rem; font-size: 1.4rem; }
+  .panel { background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 1rem; margin-bottom: 1rem; }
+  .panel h2 { color: #888; font-size: 0.85rem; text-transform: uppercase; margin-bottom: 0.75rem; }
+  .stat { display: flex; justify-content: space-between; padding: 0.25rem 0; }
+  .stat .label { color: #888; }
+  .stat .value { color: #00ff88; }
+  button { background: #00ff88; color: #0a0a0a; border: none; padding: 0.6rem 1.5rem; font-family: inherit; font-size: 0.95rem; font-weight: bold; border-radius: 4px; cursor: pointer; }
+  button:hover { background: #00cc6e; }
+  button:disabled { background: #333; color: #666; cursor: default; }
+  #result { margin-top: 0.75rem; word-break: break-all; font-size: 0.85rem; min-height: 1.2rem; }
+  #result.error { color: #ff4444; }
+  #result.ok { color: #00ff88; }
+  #activity { list-style: none; font-size: 0.8rem; }
+  #activity li { padding: 0.2rem 0; border-bottom: 1px solid #222; color: #aaa; }
+  #activity .hex { color: #00ff88; }
+  #activity .time { color: #666; margin-left: 0.5rem; }
+</style>
+</head>
+<body>
+<h1>&gt; entropy beacon</h1>
+
+<div class="panel">
+  <h2>Status</h2>
+  <div class="stat"><span class="label">Available</span><span class="value" id="available">-</span></div>
+  <div class="stat"><span class="label">Total received</span><span class="value" id="total-received">-</span></div>
+  <div class="stat"><span class="label">Total dispensed</span><span class="value" id="total-dispensed">-</span></div>
+  <div class="stat"><span class="label">Last received</span><span class="value" id="last-received">-</span></div>
+</div>
+
+<div class="panel">
+  <h2>Dispense</h2>
+  <button id="btn" onclick="getEntropy()">Get Entropy</button>
+  <div id="result"></div>
+</div>
+
+<div class="panel">
+  <h2>Recent Dispensed</h2>
+  <ul id="activity"></ul>
+</div>
+
+<script>
+const activity = [];
+
+async function refreshStatus() {
+  try {
+    const r = await fetch('/api/status');
+    if (!r.ok) { return; }
+    const s = await r.json();
+    document.getElementById('available').textContent = s.available;
+    document.getElementById('total-received').textContent = s.total_received;
+    document.getElementById('total-dispensed').textContent = s.total_dispensed;
+    document.getElementById('last-received').textContent = s.last_received || '-';
+  } catch (e) { /* ignore */ }
+}
+
+async function getEntropy() {
+  const btn = document.getElementById('btn');
+  const result = document.getElementById('result');
+  btn.disabled = true;
+  result.className = '';
+  result.textContent = '...';
+
+  try {
+    const r = await fetch('/api/entropy');
+    if (r.status === 204) {
+      result.className = 'error';
+      result.textContent = 'Pool empty';
+      return;
+    }
+    if (!r.ok) {
+      result.className = 'error';
+      result.textContent = 'Error: ' + r.statusText;
+      return;
+    }
+    const d = await r.json();
+    result.className = 'ok';
+    result.textContent = d.entropy;
+    activity.unshift({ hex: d.entropy, time: d.created_at, id: d.id });
+    if (activity.length > 20) { activity.pop(); }
+    renderActivity();
+    refreshStatus();
+  } catch (e) {
+    result.className = 'error';
+    result.textContent = 'Fetch failed';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderActivity() {
+  const ul = document.getElementById('activity');
+  ul.innerHTML = activity.map(a =>
+    '<li>#' + a.id + ' <span class="hex">' + a.hex + '</span><span class="time">' + a.time + '</span></li>'
+  ).join('');
+}
+
+refreshStatus();
+setInterval(refreshStatus, 5000);
+</script>
+</body>
+</html>

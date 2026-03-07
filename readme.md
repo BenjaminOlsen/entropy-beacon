@@ -56,7 +56,32 @@ Exit screen: `Ctrl-A` then `K`, confirm with `Y`.
 Record conditioned output to a binary file (requires `pip install pyserial`):
 
 ```
-python3 firmware/tools/capture.py /dev/tty.usbmodem<TAB> entropy.bin
+python3 firmware/tools/capture.py --port /dev/tty.usbmodem<TAB>
+```
+
+With server forwarding:
+
+```
+python3 firmware/tools/capture.py --port /dev/tty.usbmodem<TAB> --server http://localhost:8080
+```
+
+## Server
+
+Receives, verifies, stores, and dispenses entropy values. Requires Go and a C compiler (for SQLite).
+
+```
+cd server
+go run .
+```
+
+Open http://localhost:8080 for the dashboard.
+
+API:
+
+```
+curl localhost:8080/api/status
+curl localhost:8080/api/entropy
+curl -X POST localhost:8080/api/ingest -d '{"entropy":"<64 hex>","signature":"<128 hex>"}'
 ```
 
 ## Debug
@@ -88,4 +113,10 @@ firmware/
   test/           Native unit tests
   STM32L432KC.ld  Linker script
   Makefile
+server/
+  main.go         HTTP server entry point
+  handlers.go     API handlers (ingest, dispense, status)
+  store.go        SQLite operations
+  verify.go       Ed25519 signature verification
+  static/         Dashboard frontend
 ```
