@@ -32,7 +32,12 @@ C_SOURCES = \
     src/bh1750.c \
     src/uart.c \
     src/entropy/entropy.c \
-    $(CFX_DIR)/src/crypto/sha256.c
+    $(CFX_DIR)/src/crypto/sha256.c \
+    $(CFX_DIR)/src/crypto/sha512.c \
+    $(CFX_DIR)/src/crypto/ed25519.c \
+    $(CFX_DIR)/src/crypto/ge25519.c \
+    $(CFX_DIR)/src/crypto/sc25519.c \
+    $(CFX_DIR)/src/crypto/fe25519.c
 
 # Sources — HAL (only what we need)
 C_SOURCES += \

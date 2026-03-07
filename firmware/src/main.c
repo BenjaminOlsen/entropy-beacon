@@ -11,6 +11,7 @@
 #include "bh1750.h"
 #include "uart.h"
 #include "entropy/entropy.h"
+#include <cfx/ed25519.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -60,6 +61,28 @@ int main(void)
     }
     uart_puts("BH1750 ok\r\n");
 
+    char buf[140];
+
+    /******************************************************************/
+    /* signing keypair ************************************************/
+    /*  TODO: provision per-device seed in flash!!!! ******************/
+    /******************************************************************/
+    static const uint8_t seed[32] = {
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+        0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18,
+        0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f, 0x20,
+    };
+    uint8_t pk[32], sk[64];
+    cfx_ed25519_create_keypair(pk, sk, seed);
+
+    uart_puts("Ed25519 pk: ");
+    for (int i = 0; i < 32; i++) {
+        snprintf(buf, sizeof(buf), "%02x", pk[i]);
+        uart_puts(buf);
+    }
+    uart_puts("\r\n");
+
     /* Health test state */
     entropy_rct_t rct;
     entropy_apt_t apt;
@@ -70,7 +93,6 @@ int main(void)
     entropy_pool_t pool;
     entropy_pool_init(&pool);
 
-    char buf[140];
     uint32_t cycle = 0;
     uint32_t output_count = 0;
 
@@ -164,13 +186,26 @@ int main(void)
                 uint8_t conditioned[32];
                 if (entropy_pool_output(&pool, conditioned) == 0) {
                     output_count++;
+
+                    /* Sign the conditioned output */
+                    uint8_t sig[64];
+                    cfx_ed25519_sign(sig, conditioned, 32, sk);
+
 #if VERBOSE
                     snprintf(buf, sizeof(buf), "  >> [#%lu]: ", (unsigned long)output_count);
                     uart_puts(buf);
 #endif
-                    /* Print 32 bytes as hex */
+                    /* Print 32 bytes entropy as hex */
                     for (int i = 0; i < 32; i++) {
                         snprintf(buf, sizeof(buf), "%02x", conditioned[i]);
+                        uart_puts(buf);
+                    }
+                    uart_puts("\r\n");
+
+                    /* Print 64 bytes signature as hex */
+                    uart_puts("  sig: ");
+                    for (int i = 0; i < 64; i++) {
+                        snprintf(buf, sizeof(buf), "%02x", sig[i]);
                         uart_puts(buf);
                     }
                     uart_puts("\r\n");
