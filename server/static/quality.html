@@ -21,10 +21,38 @@
   #bitmap-canvas { border: 1px solid #333; width: 100%; }
   #histo-canvas { width: 100%; height: 200px; }
   .empty { color: #666; text-align: center; padding: 2rem; }
-  .range-row { display: flex; align-items: center; gap: 0.75rem; }
-  .range-row input[type=range] { flex: 1; accent-color: #00ff88; }
-  .range-row .range-label { color: #888; font-size: 0.75rem; min-width: 3rem; }
-  #range-info { color: #666; font-size: 0.75rem; margin-top: 0.4rem; }
+  .dual-range { position: relative; height: 2rem; margin: 0.5rem 0; }
+  .dual-range input[type=range] {
+    position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+    -webkit-appearance: none; appearance: none; background: none; pointer-events: none; z-index: 1;
+  }
+  .dual-range input[type=range]#from-slider { z-index: 2; }
+  .dual-range input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #00ff88; border: 2px solid #0a0a0a;
+    pointer-events: auto; cursor: pointer;
+    position: relative; z-index: 2;
+  }
+  .dual-range input[type=range]::-webkit-slider-runnable-track {
+    height: 4px; background: transparent; border-radius: 2px;
+  }
+  .dual-range input[type=range]#to-slider::-webkit-slider-runnable-track {
+    background: #333;
+  }
+  .dual-range input[type=range]::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #00ff88; border: 2px solid #0a0a0a;
+    pointer-events: auto; cursor: pointer;
+  }
+  .dual-range input[type=range]::-moz-range-track {
+    height: 4px; background: transparent; border-radius: 2px;
+  }
+  .dual-range input[type=range]#to-slider::-moz-range-track {
+    background: #333;
+  }
+  .range-labels { display: flex; justify-content: space-between; color: #888; font-size: 0.75rem; }
+  #range-info { color: #666; font-size: 0.75rem; margin-top: 0.25rem; text-align: center; }
 </style>
 </head>
 <body>
@@ -33,12 +61,11 @@
 
 <div class="panel">
   <h2>Range</h2>
-  <div class="range-row">
-    <span class="range-label" id="from-label">1</span>
+  <div class="dual-range">
     <input type="range" id="from-slider" min="1" max="1" value="1">
     <input type="range" id="to-slider" min="1" max="1" value="1">
-    <span class="range-label" id="to-label">1</span>
   </div>
+  <div class="range-labels"><span id="from-label">1</span><span id="to-label">1</span></div>
   <div id="range-info">-</div>
 </div>
 
