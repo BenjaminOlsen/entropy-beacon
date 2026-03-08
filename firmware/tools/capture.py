@@ -75,7 +75,7 @@ def main():
                     if args.server:
                         status = post_to_server(args.server, pending_entropy, sig_hex)
                         if status == 200:
-                            print("  [server] ok")
+                            sys.stdout.write("  [server] ok\r\n")
                     pending_entropy = None
 
         except KeyboardInterrupt:

@@ -59,14 +59,11 @@ func (s *Store) Insert(value, signature []byte) error {
 }
 
 func (s *Store) Dispense() (*EntropyRow, error) {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
-	row := tx.QueryRow(
-		"SELECT id, value, created_at FROM entropy WHERE dispensed = 0 ORDER BY id ASC LIMIT 1",
+	// UPDATE + RETURNING in a single statement — no race between SELECT and UPDATE
+	row := s.db.QueryRow(
+		`UPDATE entropy SET dispensed = 1, dispensed_at = datetime('now')
+		 WHERE id = (SELECT id FROM entropy WHERE dispensed = 0 ORDER BY id ASC LIMIT 1)
+		 RETURNING id, value, created_at`,
 	)
 
 	var e EntropyRow
@@ -79,16 +76,7 @@ func (s *Store) Dispense() (*EntropyRow, error) {
 	}
 
 	e.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdStr)
-
-	_, err = tx.Exec(
-		"UPDATE entropy SET dispensed = 1, dispensed_at = datetime('now') WHERE id = ?",
-		e.ID,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	return &e, tx.Commit()
+	return &e, nil
 }
 
 func (s *Store) Status() (*Status, error) {
@@ -122,7 +110,21 @@ func (s *Store) Status() (*Status, error) {
 }
 
 func (s *Store) AllValues() ([][]byte, error) {
-	rows, err := s.db.Query("SELECT value FROM entropy ORDER BY id ASC")
+	return s.ValuesRange(0, 0)
+}
+
+func (s *Store) ValuesRange(fromID, toID int) ([][]byte, error) {
+	var rows *sql.Rows
+	var err error
+	if fromID > 0 && toID > 0 {
+		rows, err = s.db.Query("SELECT value FROM entropy WHERE id >= ? AND id <= ? ORDER BY id ASC", fromID, toID)
+	} else if fromID > 0 {
+		rows, err = s.db.Query("SELECT value FROM entropy WHERE id >= ? ORDER BY id ASC", fromID)
+	} else if toID > 0 {
+		rows, err = s.db.Query("SELECT value FROM entropy WHERE id <= ? ORDER BY id ASC", toID)
+	} else {
+		rows, err = s.db.Query("SELECT value FROM entropy ORDER BY id ASC")
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +139,11 @@ func (s *Store) AllValues() ([][]byte, error) {
 		values = append(values, v)
 	}
 	return values, rows.Err()
+}
+
+func (s *Store) IDRange() (minID, maxID int, err error) {
+	err = s.db.QueryRow("SELECT COALESCE(MIN(id),0), COALESCE(MAX(id),0) FROM entropy").Scan(&minID, &maxID)
+	return
 }
 
 func (s *Store) Reset() error {

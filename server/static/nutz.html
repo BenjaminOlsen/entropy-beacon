@@ -259,6 +259,7 @@ const HEX_WALL_LIMIT = 4000; // characters
 
 async function poll() {
   try {
+    // lightweight stats poll
     const r = await fetch('/api/quality');
     const d = await r.json();
     if (!d.samples) { return; }
@@ -268,29 +269,30 @@ async function poll() {
     document.getElementById('balance').textContent = d.ones_pct.toFixed(2) + '%';
     document.getElementById('pval').textContent = d.chi_squared_pvalue;
 
-    entropyHex = d.raw;
-
     if (d.samples > lastSamples) {
       bgFlash = 1;
 
-      // pick new words from vocabulary using latest entropy
-      const tail = entropyHex.slice(-32);
-      for (let i = 0; i < 4; i++) {
-        const b = parseInt(tail.substr(i * 4, 2) || '00', 16);
-        if (b % 5 === 0) {
-          // sometimes use a hex chunk as the word
-          const off = (b * 7) % Math.max(1, entropyHex.length - 20);
-          words[i] = entropyHex.substring(off, off + 8 + (b % 16));
-        } else {
-          words[i] = vocabulary[b % vocabulary.length];
+      // fetch raw for latest values only
+      const fetchFrom = Math.max(1, (d.max_id || 1) - 100);
+      const rr = await fetch(`/api/quality/raw?from=${fetchFrom}`);
+      const rd = await rr.json();
+      if (rd.raw) {
+        entropyHex = rd.raw;
+
+        const tail = entropyHex.slice(-32);
+        for (let i = 0; i < 4; i++) {
+          const b = parseInt(tail.substr(i * 4, 2) || '00', 16);
+          if (b % 5 === 0) {
+            const off = (b * 7) % Math.max(1, entropyHex.length - 20);
+            words[i] = entropyHex.substring(off, off + 8 + (b % 16));
+          } else {
+            words[i] = vocabulary[b % vocabulary.length];
+          }
         }
+
+        document.getElementById('latest').textContent = entropyHex.slice(-64);
+        paintHexWall(entropyHex.slice(-HEX_WALL_LIMIT));
       }
-
-      // latest value display
-      document.getElementById('latest').textContent = entropyHex.slice(-64);
-
-      // paint hex wall — static canvas, no layout cost
-      paintHexWall(entropyHex.slice(-HEX_WALL_LIMIT));
 
       lastSamples = d.samples;
     }
@@ -298,7 +300,7 @@ async function poll() {
 }
 
 poll();
-setInterval(poll, 2000);
+setInterval(poll, 1000);
 
 let lastTick = 0;
 function loop(now) {

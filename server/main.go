@@ -22,6 +22,7 @@ func main() {
 	mux.HandleFunc("/api/entropy", handleEntropy(store))
 	mux.HandleFunc("/api/status", handleStatus(store))
 	mux.HandleFunc("/api/quality", handleQuality(store))
+	mux.HandleFunc("/api/quality/raw", handleQualityRaw(store))
 	mux.HandleFunc("/api/reset", handleReset(store))
 	mux.Handle("/", http.FileServer(http.Dir("static")))
 

@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/bits"
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -107,6 +108,64 @@ func handleStatus(store *Store) http.HandlerFunc {
 	}
 }
 
+func computeQualityStats(values [][]byte) map[string]interface{} {
+	var all []byte
+	for _, v := range values {
+		all = append(all, v...)
+	}
+
+	totalBits := len(all) * 8
+	onesCount := 0
+	for _, b := range all {
+		onesCount += bits.OnesCount8(b)
+	}
+
+	var freq [256]int
+	for _, b := range all {
+		freq[b]++
+	}
+
+	expected := float64(len(all)) / 256.0
+	chiSq := 0.0
+	for i := 0; i < 256; i++ {
+		diff := float64(freq[i]) - expected
+		chiSq += (diff * diff) / expected
+	}
+
+	df := 255.0
+	z := math.Pow(chiSq/df, 1.0/3.0) - (1.0 - 2.0/(9.0*df))
+	z /= math.Sqrt(2.0 / (9.0 * df))
+	pValue := 0.5 * math.Erfc(z/math.Sqrt2)
+
+	n := len(all)
+	var sumXY, sumX, sumY, sumX2, sumY2 float64
+	for i := 0; i < n-1; i++ {
+		x := float64(all[i])
+		y := float64(all[i+1])
+		sumXY += x * y
+		sumX += x
+		sumY += y
+		sumX2 += x * x
+		sumY2 += y * y
+	}
+	nf := float64(n - 1)
+	corr := (nf*sumXY - sumX*sumY) / math.Sqrt((nf*sumX2-sumX*sumX)*(nf*sumY2-sumY*sumY))
+	if math.IsNaN(corr) {
+		corr = 0
+	}
+
+	return map[string]interface{}{
+		"samples":            len(values),
+		"total_bits":         totalBits,
+		"ones_count":         onesCount,
+		"ones_pct":           float64(onesCount) / float64(totalBits) * 100,
+		"byte_freq":          freq,
+		"chi_squared":        math.Round(chiSq*100) / 100,
+		"chi_squared_pvalue": math.Round(pValue*10000) / 10000,
+		"serial_correlation": math.Round(corr*10000) / 10000,
+	}
+}
+
 func handleQuality(store *Store) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -121,79 +180,61 @@ func handleQuality(store *Store) http.HandlerFunc {
 			return
 		}
 
+		minID, maxID, err := store.IDRange()
+		if err != nil {
+			log.Printf("quality error: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
 		if len(values) == 0 {
-			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"samples": 0,
+				"samples": 0, "min_id": 0, "max_id": 0,
 			})
 			return
 		}
 
-		// Concatenate all entropy values
+		result := computeQualityStats(values)
+		result["min_id"] = minID
+		result["max_id"] = maxID
+		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func handleQualityRaw(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		fromID, _ := strconv.Atoi(r.URL.Query().Get("from"))
+		toID, _ := strconv.Atoi(r.URL.Query().Get("to"))
+
+		values, err := store.ValuesRange(fromID, toID)
+		if err != nil {
+			log.Printf("quality/raw error: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		if len(values) == 0 {
+			json.NewEncoder(w).Encode(map[string]interface{}{
+				"samples": 0, "raw": "",
+			})
+			return
+		}
+
 		var all []byte
 		for _, v := range values {
 			all = append(all, v...)
 		}
 
-		totalBits := len(all) * 8
-		onesCount := 0
-		for _, b := range all {
-			onesCount += bits.OnesCount8(b)
-		}
-
-		// Byte frequency histogram
-		var freq [256]int
-		for _, b := range all {
-			freq[b]++
-		}
-
-		// Chi-squared test on byte distribution
-		expected := float64(len(all)) / 256.0
-		chiSq := 0.0
-		for i := 0; i < 256; i++ {
-			diff := float64(freq[i]) - expected
-			chiSq += (diff * diff) / expected
-		}
-
-		// p-value approximation for chi-squared with 255 degrees of freedom
-		// Using Wilson-Hilferty normal approximation
-		df := 255.0
-		z := math.Pow(chiSq/df, 1.0/3.0) - (1.0 - 2.0/(9.0*df))
-		z /= math.Sqrt(2.0 / (9.0 * df))
-		pValue := 0.5 * math.Erfc(z/math.Sqrt2)
-
-		// Serial correlation coefficient (lag 1)
-		n := len(all)
-		var sumXY, sumX, sumY, sumX2, sumY2 float64
-		for i := 0; i < n-1; i++ {
-			x := float64(all[i])
-			y := float64(all[i+1])
-			sumXY += x * y
-			sumX += x
-			sumY += y
-			sumX2 += x * x
-			sumY2 += y * y
-		}
-		nf := float64(n - 1)
-		corr := (nf*sumXY - sumX*sumY) / math.Sqrt((nf*sumX2-sumX*sumX)*(nf*sumY2-sumY*sumY))
-		if math.IsNaN(corr) {
-			corr = 0
-		}
-
-		// Raw bytes as hex for bitmap rendering
-		rawHex := hex.EncodeToString(all)
-
-		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"samples":            len(values),
-			"total_bits":         totalBits,
-			"ones_count":         onesCount,
-			"ones_pct":           float64(onesCount) / float64(totalBits) * 100,
-			"byte_freq":          freq,
-			"chi_squared":        math.Round(chiSq*100) / 100,
-			"chi_squared_pvalue": math.Round(pValue*10000) / 10000,
-			"serial_correlation": math.Round(corr*10000) / 10000,
-			"raw":                rawHex,
+			"samples": len(values),
+			"raw":     hex.EncodeToString(all),
 		})
 	}
 }
