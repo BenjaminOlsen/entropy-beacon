@@ -33,8 +33,8 @@ HAL_StatusTypeDef adxl345_init(I2C_HandleTypeDef *hi2c)
         return status;
     }
 
-    /* 200 Hz output data rate */
-    status = adxl345_write_reg(hi2c, ADXL345_REG_BW_RATE, ADXL345_RATE_200HZ);
+    /* 1600 Hz output data rate */
+    status = adxl345_write_reg(hi2c, ADXL345_REG_BW_RATE, ADXL345_RATE_1600HZ);
     if (status != HAL_OK) {
         return status;
     }

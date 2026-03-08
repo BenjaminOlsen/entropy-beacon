@@ -14,6 +14,9 @@
 #define ADXL345_REG_DATAX0      0x32  /* 6 bytes: X0,X1,Y0,Y1,Z0,Z1 */
 
 /* BW_RATE values */
+#define ADXL345_RATE_3200HZ 0x0F
+#define ADXL345_RATE_1600HZ 0x0E
+#define ADXL345_RATE_800HZ  0x0D
 #define ADXL345_RATE_200HZ  0x0B
 #define ADXL345_RATE_100HZ  0x0A
 

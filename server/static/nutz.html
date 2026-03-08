@@ -10,29 +10,39 @@
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { background: #000; overflow: hidden; }
 
+  #hex-wall {
+    position: fixed; inset: 0; z-index: 0;
+    pointer-events: none;
+  }
+
   #void {
-    position: fixed; inset: 0;
-    display: flex; align-items: center; justify-content: center;
-    flex-direction: column; gap: 0;
+    position: fixed; inset: 0; z-index: 1;
+    pointer-events: none;
   }
 
   .word {
+    position: fixed;
+    left: 0; right: 0;
     text-align: center;
-    text-transform: uppercase;
     line-height: 1;
     transition: none;
-    will-change: font-family, color, font-size, letter-spacing;
+    white-space: nowrap;
+    contain: layout style;
+    will-change: font-family, color, font-size;
   }
 
-  #bg-stats {
-    position: fixed; z-index: 0; inset: 0;
-    display: flex; align-items: center; justify-content: center;
-    flex-direction: column;
+  #latest {
+    position: fixed; z-index: 5;
+    bottom: 4rem; left: 0; right: 0;
+    text-align: center;
     font-family: 'Courier New', monospace;
-    color: #fff06; font-size: 15vw; font-weight: bold;
-    pointer-events: none; line-height: 0.9;
-    opacity: 0.04;
-    overflow: hidden;
+    font-size: 1.1rem;
+    color: #00ff88;
+    letter-spacing: 0.1em;
+    pointer-events: none;
+    text-shadow: 0 0 10px #00ff8866;
+    word-break: break-all;
+    padding: 0 2rem;
   }
 
   #hud {
@@ -53,11 +63,7 @@
 </head>
 <body>
 
-<div id="bg-stats">
-  <div id="bg-count">0</div>
-  <div id="bg-bits">0</div>
-  <div id="bg-bal">50.000</div>
-</div>
+<canvas id="hex-wall"></canvas>
 
 <div id="void">
   <div class="word" id="w0"></div>
@@ -65,6 +71,8 @@
   <div class="word" id="w2"></div>
   <div class="word" id="w3"></div>
 </div>
+
+<div id="latest"></div>
 
 <div id="hud">
   <span id="samples">0</span> samples
@@ -94,7 +102,7 @@ const vocabulary = [
   'BINARY','BYTE','OXIDE','PLASMA','FIELD','WAVE',
   'ORIGIN','SOURCE','HARVEST','RAW','PURE','TRUE',
   'ABYSS','FRACTAL','OBLIVION','LATTICE','MUON','FERMION',
-  'BOSON','QUARK','LEPTON','GLUON','HADRON','NEUTRINO',
+  'BOSON','QUARK','LEPTON','HADRON','NEUTRINO',
   'TACHYON','BARYON','MESON','GRAVITON','PHONON','SOLITON',
   'ANNIHILATE','COLLIDE','IGNITE','DISSOLVE','SHATTER','EVAPORATE',
   'RADIATE','OSCILLATE','RESONATE','DETONATE','COLLAPSE','EMERGE',
@@ -119,105 +127,136 @@ const vocabulary = [
   'VENOM','TOXIN','SPORE','PARASITE','VIRUS','PRION',
   'RITUAL','MANTRA','SIGIL','RUNE','GLYPH','TOTEM',
 ];
-let words = ['ENTROPY', 'BEACON', '', ''];
+
 const els = [0,1,2,3].map(i => document.getElementById('w' + i));
+const hexWallCanvas = document.getElementById('hex-wall');
+const hwCtx = hexWallCanvas.getContext('2d');
+
+function paintHexWall(hex) {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  hexWallCanvas.width = w;
+  hexWallCanvas.height = h;
+  const fontSize = Math.max(10, w * 0.011);
+  const charW = fontSize * 0.6;
+  const lineH = fontSize * 1.3;
+  const cols = Math.floor(w / charW);
+  const spaced = hex.replace(/(.{4})/g, '$1 ');
+
+  hwCtx.clearRect(0, 0, w, h);
+  hwCtx.font = `${fontSize}px 'Courier New', monospace`;
+  hwCtx.fillStyle = `hsla(140, 60%, 45%, 0.07)`;
+
+  let x = 4, y = lineH;
+  for (let i = 0; i < spaced.length && y < h + lineH; i++) {
+    hwCtx.fillText(spaced[i], x, y);
+    x += charW;
+    if (x > w - charW) { x = 4; y += lineH; }
+  }
+}
+const aligns = ['left','center','right'];
+const txforms = ['uppercase','lowercase','capitalize','none'];
+const decos = ['none','underline','line-through','overline'];
 
 let entropyHex = '';
 let lastSamples = 0;
 let frameCount = 0;
-let strobePhase = 0;
 let bgFlash = 0;
 
-function hexByte(offset) {
-  if (!entropyHex || entropyHex.length < 2) { return Math.floor(Math.random() * 256); }
-  const i = ((offset * 2) % entropyHex.length);
-  return parseInt(entropyHex.substr(i, 2) || 'ff', 16);
+// words[i] only changes on new data
+let words = ['ENTROPY','BEACON','CHAOS','VOID'];
+
+// Use a simple fast RNG seeded by entropy bytes for per-frame randomness
+// This decouples animation speed from data arrival
+let rngState = Date.now() | 1;
+function fastRng() {
+  rngState ^= rngState << 13;
+  rngState ^= rngState >> 17;
+  rngState ^= rngState << 5;
+  return (rngState >>> 0) % 256;
 }
 
 function tick() {
   frameCount++;
-  strobePhase += 0.15;
 
-  // background flash on new data, otherwise black
+  // reseed rng from entropy periodically so it's influenced by real data
+  if (frameCount % 60 === 0 && entropyHex.length >= 8) {
+    const off = (frameCount * 2) % (entropyHex.length - 8);
+    rngState = parseInt(entropyHex.substr(off, 8), 16) | 1;
+  }
+
+  // background flash on new data
   if (bgFlash > 0) {
     const l = Math.min(bgFlash * 100, 100);
-    document.body.style.background = `hsl(${hexByte(frameCount) / 255 * 360}, 100%, ${l}%)`;
-    bgFlash *= 0.85;
-    if (bgFlash < 0.01) { bgFlash = 0; }
-  } else {
-    document.body.style.background = '#000';
+    document.body.style.background = `hsl(${fastRng() / 255 * 360}, 100%, ${l}%)`;
+    bgFlash *= 0.82;
+    if (bgFlash < 0.01) { bgFlash = 0; document.body.style.background = '#000'; }
   }
 
-  // strobe between showing/hiding — fast flash like ETV credits
-  const show = Math.sin(strobePhase) > -0.3;
-  const prevShow = Math.sin(strobePhase - 0.15) > -0.3;
-
-  // pick new words on each strobe-on transition
-  if (show && !prevShow) {
-    for (let i = 0; i < 4; i++) {
-      const b = hexByte(frameCount * 3 + i * 11);
-      words[i] = vocabulary[b % vocabulary.length];
-    }
-    // occasionally show hex instead
-    if (entropyHex.length >= 64) {
-      const b = hexByte(frameCount);
-      if (b % 5 === 0) {
-        const off = (b * 4) % Math.max(1, entropyHex.length - 16);
-        words[Math.floor(Math.random() * 4)] = entropyHex.substring(off, off + 16).toUpperCase();
-      }
-    }
-  }
+  // strobe — random black frames
+  const blackFrame = fastRng() % 6 === 0;
 
   for (let i = 0; i < els.length; i++) {
-    els[i].style.display = 'block';
-
-    if (!show) {
+    if (blackFrame) {
       els[i].style.opacity = '0';
       continue;
     }
     els[i].style.opacity = '1';
 
-    // pick font from entropy bytes
-    const b = hexByte(frameCount * 4 + i * 7);
-    const font = fonts[b % fonts.length];
+    // DESIGN changes every frame (font, color, size, etc) — position stays fixed
+    const font = fonts[fastRng() % fonts.length];
+    const baseSize = Math.min(window.innerWidth / 8, window.innerHeight / 8);
+    const size = baseSize * (0.8 + (fastRng() / 255) * 0.4);
+    const hue = (fastRng() / 255) * 360;
+    const sat = 60 + (fastRng() / 255) * 40;
+    const lum = 40 + (fastRng() / 255) * 40;
+    const spacing = (fastRng() / 255 - 0.3) * 0.6;
+    const txform = txforms[fastRng() % 4];
+    const deco = decos[fastRng() % 4];
+    const style = fastRng();
 
-    // size: volatile, driven by entropy
-    const sizeBase = Math.min(window.innerWidth / (words[i].length * 0.55), window.innerHeight / 5);
-    const sizeMod = (hexByte(frameCount * 3 + i * 13) / 255 - 0.5) * sizeBase * 0.5;
-    const size = Math.max(20, sizeBase + sizeMod);
+    // fixed vertical positions: 20%, 38%, 56%, 74%
+    const yPct = 20 + i * 18;
 
-    // color: cycle through harsh neons, strobed
-    const hue = (hexByte(frameCount * 2 + i * 11) / 255) * 360;
-    const sat = 70 + (hexByte(frameCount + i * 5) / 255) * 30;
-    const lum = 50 + (hexByte(frameCount * 5 + i) / 255) * 30;
-
-    // letter spacing
-    const spacing = (hexByte(frameCount * 7 + i * 3) / 255 - 0.3) * 0.4;
-
+    // TEXT stays the same until new data arrives
     els[i].textContent = words[i];
     els[i].style.fontFamily = `'${font}', sans-serif`;
     els[i].style.fontSize = size + 'px';
-    els[i].style.color = `hsl(${hue}, ${sat}%, ${lum}%)`;
     els[i].style.letterSpacing = spacing + 'em';
-    els[i].style.textShadow = `0 0 ${10 + b % 40}px hsl(${hue}, 100%, 50%),`
-      + `0 0 ${40 + b % 80}px hsl(${hue}, 100%, 40%)`;
+    els[i].style.top = yPct + '%';
+    els[i].style.transform = 'translateY(-50%)';
+    els[i].style.textTransform = txform;
+    els[i].style.textDecoration = deco;
 
-    // occasional invert
-    if (b % 17 === 0) {
+    if (style % 11 === 0) {
+      // inverted block
       els[i].style.color = '#000';
+      els[i].style.webkitTextStroke = '';
       els[i].style.textShadow = 'none';
       els[i].style.background = `hsl(${hue}, ${sat}%, ${lum}%)`;
-      els[i].style.padding = '0 0.2em';
+      els[i].style.padding = '0 0.3em';
+    } else if (style % 13 === 0) {
+      // outline only
+      els[i].style.color = 'transparent';
+      els[i].style.webkitTextStroke = `2px hsl(${hue}, ${sat}%, ${lum}%)`;
+      els[i].style.textShadow = 'none';
+      els[i].style.background = 'transparent';
+      els[i].style.padding = '0';
     } else {
+      // normal glow
+      els[i].style.color = `hsl(${hue}, ${sat}%, ${lum}%)`;
+      els[i].style.webkitTextStroke = '';
+      els[i].style.textShadow = `0 0 ${10 + style % 40}px hsl(${hue}, 100%, 50%), 0 0 ${40 + style % 80}px hsl(${hue}, 100%, 40%)`;
       els[i].style.background = 'transparent';
       els[i].style.padding = '0';
     }
   }
 
-  requestAnimationFrame(tick);
 }
 
 // --- DATA ---
+const HEX_WALL_LIMIT = 4000; // characters
+
 async function poll() {
   try {
     const r = await fetch('/api/quality');
@@ -229,14 +268,30 @@ async function poll() {
     document.getElementById('balance').textContent = d.ones_pct.toFixed(2) + '%';
     document.getElementById('pval').textContent = d.chi_squared_pvalue;
 
-    document.getElementById('bg-count').textContent = d.samples;
-    document.getElementById('bg-bits').textContent = d.total_bits;
-    document.getElementById('bg-bal').textContent = d.ones_pct.toFixed(3);
-
     entropyHex = d.raw;
 
     if (d.samples > lastSamples) {
       bgFlash = 1;
+
+      // pick new words from vocabulary using latest entropy
+      const tail = entropyHex.slice(-32);
+      for (let i = 0; i < 4; i++) {
+        const b = parseInt(tail.substr(i * 4, 2) || '00', 16);
+        if (b % 5 === 0) {
+          // sometimes use a hex chunk as the word
+          const off = (b * 7) % Math.max(1, entropyHex.length - 20);
+          words[i] = entropyHex.substring(off, off + 8 + (b % 16));
+        } else {
+          words[i] = vocabulary[b % vocabulary.length];
+        }
+      }
+
+      // latest value display
+      document.getElementById('latest').textContent = entropyHex.slice(-64);
+
+      // paint hex wall — static canvas, no layout cost
+      paintHexWall(entropyHex.slice(-HEX_WALL_LIMIT));
+
       lastSamples = d.samples;
     }
   } catch(e) {}
@@ -244,7 +299,16 @@ async function poll() {
 
 poll();
 setInterval(poll, 2000);
-tick();
+
+let lastTick = 0;
+function loop(now) {
+  if (now - lastTick >= 300) {
+    lastTick = now;
+    tick();
+  }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
 </script>
 </body>
 </html>

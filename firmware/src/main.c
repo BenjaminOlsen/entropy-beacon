@@ -125,7 +125,7 @@ int main(void)
                 lux_idx++;
             }
 
-            HAL_Delay(5);  /* ~200 Hz */
+            HAL_Delay(3);  /* ~333 Hz (ADXL345 at 1600 Hz ODR) */
         }
 
         /* Extract delta-sign bits from accel axes + lux */
