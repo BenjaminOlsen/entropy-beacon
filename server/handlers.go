@@ -41,12 +41,13 @@ func handleIngest(store *Store) http.HandlerFunc {
 			return
 		}
 
-		if !verifySignature(entropy, sig) {
+		beaconID, ok := verifySignature(entropy, sig)
+		if !ok {
 			http.Error(w, "signature verification failed", http.StatusUnauthorized)
 			return
 		}
 
-		if err := store.Insert(entropy, sig); err != nil {
+		if err := store.Insert(entropy, sig, beaconID); err != nil {
 			if strings.Contains(err.Error(), "UNIQUE constraint") {
 				http.Error(w, "duplicate entropy value", http.StatusConflict)
 				return
@@ -68,7 +69,9 @@ func handleEntropy(store *Store) http.HandlerFunc {
 			return
 		}
 
-		row, err := store.Dispense()
+		beaconID := r.URL.Query().Get("beacon")
+
+		row, err := store.Dispense(beaconID)
 		if err != nil {
 			log.Printf("dispense error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -96,7 +99,9 @@ func handleStatus(store *Store) http.HandlerFunc {
 			return
 		}
 
-		st, err := store.Status()
+		beaconID := r.URL.Query().Get("beacon")
+
+		st, err := store.Status(beaconID)
 		if err != nil {
 			log.Printf("status error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -173,14 +178,16 @@ func handleQuality(store *Store) http.HandlerFunc {
 			return
 		}
 
-		values, err := store.AllValues()
+		beaconID := r.URL.Query().Get("beacon")
+
+		values, err := store.AllValues(beaconID)
 		if err != nil {
 			log.Printf("quality error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
 		}
 
-		minID, maxID, err := store.IDRange()
+		minID, maxID, err := store.IDRange(beaconID)
 		if err != nil {
 			log.Printf("quality error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -209,10 +216,11 @@ func handleQualityRaw(store *Store) http.HandlerFunc {
 			return
 		}
 
+		beaconID := r.URL.Query().Get("beacon")
 		fromID, _ := strconv.Atoi(r.URL.Query().Get("from"))
 		toID, _ := strconv.Atoi(r.URL.Query().Get("to"))
 
-		values, err := store.ValuesRange(fromID, toID)
+		values, err := store.ValuesRange(beaconID, fromID, toID)
 		if err != nil {
 			log.Printf("quality/raw error: %v", err)
 			http.Error(w, "internal error", http.StatusInternalServerError)
@@ -237,13 +245,36 @@ func handleQualityRaw(store *Store) http.HandlerFunc {
 			"raw":     hex.EncodeToString(all),
 		}
 
-		firstTime, lastTime, err := store.TimeRangeForIDs(fromID, toID)
+		firstTime, lastTime, err := store.TimeRangeForIDs(beaconID, fromID, toID)
 		if err == nil && firstTime != "" {
 			result["first_time"] = firstTime
 			result["last_time"] = lastTime
 		}
 
 		json.NewEncoder(w).Encode(result)
+	}
+}
+
+func handleBeacons(store *Store) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		beacons, err := store.ListBeacons()
+		if err != nil {
+			log.Printf("beacons error: %v", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
+			return
+		}
+
+		if beacons == nil {
+			beacons = []BeaconInfo{}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(beacons)
 	}
 }
 

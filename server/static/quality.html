@@ -64,8 +64,8 @@
 </style>
 </head>
 <body>
-<h1>&gt; entropy quality</h1>
-<div class="nav"><a href="/">&lt; dashboard</a></div>
+<h1>&gt; entropy quality <span id="beacon-label"></span></h1>
+<div class="nav"><a id="back-link" href="/">&lt; dashboard</a></div>
 
 <div class="panel">
   <h2>Range</h2>
@@ -114,6 +114,13 @@
 </div>
 
 <script>
+const params = new URLSearchParams(window.location.search);
+const beaconID = params.get('beacon') || '';
+const bq = beaconID ? 'beacon=' + encodeURIComponent(beaconID) : '';
+
+document.getElementById('beacon-label').textContent = beaconID ? '[' + beaconID + ']' : '';
+document.getElementById('back-link').href = beaconID ? '/beacon.html?id=' + encodeURIComponent(beaconID) : '/';
+
 const fromSlider = document.getElementById('from-slider');
 const toSlider = document.getElementById('to-slider');
 let globalMinID = 0, globalMaxID = 0;
@@ -306,7 +313,9 @@ async function fetchAndRender() {
   }
 
   try {
-    const r = await fetch(`/api/quality/raw?from=${from}&to=${to}`);
+    let url = `/api/quality/raw?from=${from}&to=${to}`;
+    if (bq) { url += '&' + bq; }
+    const r = await fetch(url);
     const d = await r.json();
 
     if (!d.samples || !d.raw) {
@@ -344,7 +353,9 @@ async function fetchAndRender() {
 // Update slider bounds from /api/quality (lightweight poll)
 async function pollBounds() {
   try {
-    const r = await fetch('/api/quality');
+    let url = '/api/quality';
+    if (bq) { url += '?' + bq; }
+    const r = await fetch(url);
     const d = await r.json();
     if (!d.samples || !d.min_id) { return; }
 
