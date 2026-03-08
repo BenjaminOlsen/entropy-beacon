@@ -75,6 +75,7 @@
   </div>
   <div class="range-labels"><span id="from-label">1</span><span id="to-label">1</span></div>
   <div id="range-info">-</div>
+  <div id="range-times" style="display:flex;justify-content:space-between;color:#666;font-size:0.7rem;margin-top:0.25rem;"></div>
 </div>
 
 <div class="panel">
@@ -217,8 +218,8 @@ function renderStats(s) {
 
   let throughputHtml = '';
   if (s.bytesPerSec != null) {
-    const bps = s.bytesPerSec;
-    const label = bps >= 1024 ? (bps / 1024).toFixed(1) + ' KB/s' : bps.toFixed(1) + ' B/s';
+    const bps = s.bytesPerSec * 8;
+    const label = bps >= 1000 ? (bps / 1000).toFixed(1) + ' kbit/s' : bps.toFixed(0) + ' bit/s';
     throughputHtml = `<div class="stat"><span class="label">Avg throughput</span><span class="value">${label}</span></div>`;
   }
 
@@ -327,6 +328,14 @@ async function fetchAndRender() {
     renderStats(stats);
     renderBitmap(raw);
     renderHistogram(stats.freq, raw.length);
+
+    const timesEl = document.getElementById('range-times');
+    if (d.first_time && d.last_time) {
+      const fmt = t => new Date(t + 'Z').toLocaleString();
+      timesEl.innerHTML = `<span>${fmt(d.first_time)}</span><span>${fmt(d.last_time)}</span>`;
+    } else {
+      timesEl.innerHTML = '';
+    }
   } catch (e) {
     document.getElementById('stats').textContent = 'Error loading data.';
   }
