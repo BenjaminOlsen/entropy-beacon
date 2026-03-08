@@ -21,6 +21,14 @@
   #bitmap-canvas { border: 1px solid #333; width: 100%; }
   #histo-canvas { width: 100%; height: 200px; }
   .empty { color: #666; text-align: center; padding: 2rem; }
+  .bar-row { display: flex; align-items: center; gap: 0.75rem; padding: 0.3rem 0; }
+  .bar-row .label { color: #888; font-size: 0.85rem; min-width: 7rem; }
+  .bar-track { flex: 1; height: 6px; background: #333; border-radius: 3px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+  .bar-fill.good { background: #00ff88; }
+  .bar-fill.ok { background: #ffaa00; }
+  .bar-fill.bad { background: #ff4444; }
+  .bar-row .val { color: #aaa; font-size: 0.8rem; min-width: 4rem; text-align: right; }
   .dual-range { position: relative; height: 2rem; margin: 0.5rem 0; }
   .dual-range input[type=range] {
     position: absolute; left: 0; top: 0; width: 100%; height: 100%;
@@ -57,7 +65,7 @@
 </head>
 <body>
 <h1>&gt; entropy quality</h1>
-<div class="nav"><a href="/">&lt; dashboard</a> · <a href="/nutz.html">nutz mode</a></div>
+<div class="nav"><a href="/">&lt; dashboard</a></div>
 
 <div class="panel">
   <h2>Range</h2>
@@ -70,19 +78,38 @@
 </div>
 
 <div class="panel">
-  <h2>Statistics</h2>
-  <div id="stats" class="empty">Loading...</div>
+  <h2>Quality</h2>
+  <div class="bar-row">
+    <span class="label">Bit balance</span>
+    <div class="bar-track"><div class="bar-fill good" id="bar-balance" style="width:0%"></div></div>
+    <span class="val" id="val-balance">-</span>
+  </div>
+  <div class="bar-row">
+    <span class="label">Byte spread</span>
+    <div class="bar-track"><div class="bar-fill good" id="bar-spread" style="width:0%"></div></div>
+    <span class="val" id="val-spread">-</span>
+  </div>
+  <div class="bar-row">
+    <span class="label">Independence</span>
+    <div class="bar-track"><div class="bar-fill good" id="bar-corr" style="width:0%"></div></div>
+    <span class="val" id="val-corr">-</span>
+  </div>
 </div>
 
 <div class="panel">
-  <h2>Bit Bitmap</h2>
-  <canvas id="bitmap-canvas"></canvas>
+  <h2>Statistics</h2>
+  <div id="stats" class="empty">Loading...</div>
 </div>
 
 <div class="panel">
   <h2>Byte Frequency Histogram</h2>
   <canvas id="histo-canvas"></canvas>
   <div style="display:flex;justify-content:space-between;color:#444;font-size:0.7rem;margin-top:0.25rem;"><span>0</span><span id="histo-n"></span><span>255</span></div>
+</div>
+
+<div class="panel">
+  <h2>Bit Bitmap</h2>
+  <canvas id="bitmap-canvas"></canvas>
 </div>
 
 <script>
@@ -160,6 +187,15 @@ function erf(x) {
   return sign * y;
 }
 
+function setBar(id, score, label) {
+  const bar = document.getElementById('bar-' + id);
+  const val = document.getElementById('val-' + id);
+  const pct = Math.max(0, Math.min(100, score));
+  bar.style.width = pct + '%';
+  bar.className = 'bar-fill ' + (pct >= 80 ? 'good' : pct >= 50 ? 'ok' : 'bad');
+  val.textContent = label;
+}
+
 function renderStats(s) {
   const biasClass = Math.abs(s.onesPct - 50) < 1 ? '' : Math.abs(s.onesPct - 50) < 2 ? 'warn' : 'bad';
   const corrAbs = Math.abs(s.corr);
@@ -168,6 +204,16 @@ function renderStats(s) {
   const pRound = Math.round(s.pValue * 10000) / 10000;
   const corrRound = Math.round(s.corr * 10000) / 10000;
   const pClass = pRound > 0.01 ? '' : pRound > 0.001 ? 'warn' : 'bad';
+
+  // Quality bars
+  const balanceOff = Math.abs(s.onesPct - 50);
+  const balanceScore = Math.max(0, 100 - balanceOff * 20);
+  // p-value: >0.01 is fine, <0.001 is concerning
+  const spreadScore = s.pValue >= 0.01 ? 100 : s.pValue >= 0.001 ? 60 : Math.max(0, s.pValue * 60000);
+  const corrScore = Math.max(0, 100 - corrAbs * 2000);
+  setBar('balance', balanceScore, balanceOff < 0.5 ? 'ideal' : balanceOff.toFixed(1) + '% off');
+  setBar('spread', spreadScore, s.pValue > 0.05 ? 'uniform' : 'some bias');
+  setBar('corr', corrScore, corrAbs < 0.01 ? 'none' : corrRound.toString());
 
   document.getElementById('stats').innerHTML = `
     <div class="stat"><span class="label">Samples</span><span class="value">${s.samples} (${s.totalBits} bits)</span></div>
