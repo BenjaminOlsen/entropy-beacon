@@ -215,8 +215,16 @@ function renderStats(s) {
   setBar('spread', spreadScore, s.pValue > 0.05 ? 'uniform' : 'some bias');
   setBar('corr', corrScore, corrAbs < 0.01 ? 'none' : corrRound.toString());
 
+  let throughputHtml = '';
+  if (s.bytesPerSec != null) {
+    const bps = s.bytesPerSec;
+    const label = bps >= 1024 ? (bps / 1024).toFixed(1) + ' KB/s' : bps.toFixed(1) + ' B/s';
+    throughputHtml = `<div class="stat"><span class="label">Avg throughput</span><span class="value">${label}</span></div>`;
+  }
+
   document.getElementById('stats').innerHTML = `
     <div class="stat"><span class="label">Samples</span><span class="value">${s.samples} (${s.totalBits} bits)</span></div>
+    ${throughputHtml}
     <div class="stat"><span class="label">Bit balance</span><span class="value ${biasClass}">${s.onesPct.toFixed(3)}%</span></div>
     <div class="stat"><span class="label">Chi-squared (byte)</span><span class="value ${pClass}">${chiRound} (p=${pRound})</span></div>
     <div class="stat"><span class="label">Serial correlation</span><span class="value ${corrClass}">${corrRound}</span></div>
@@ -307,6 +315,15 @@ async function fetchAndRender() {
 
     const raw = hexToBytes(d.raw);
     const stats = computeStats(raw);
+    stats.bytesPerSec = null;
+    if (d.first_time && d.last_time && d.first_time !== d.last_time) {
+      const first = new Date(d.first_time + 'Z');
+      const last = new Date(d.last_time + 'Z');
+      const secs = (last - first) / 1000;
+      if (secs > 0) {
+        stats.bytesPerSec = raw.length / secs;
+      }
+    }
     renderStats(stats);
     renderBitmap(raw);
     renderHistogram(stats.freq, raw.length);

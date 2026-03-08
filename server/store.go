@@ -146,6 +146,21 @@ func (s *Store) IDRange() (minID, maxID int, err error) {
 	return
 }
 
+func (s *Store) TimeRangeForIDs(fromID, toID int) (firstTime, lastTime string, err error) {
+	query := "SELECT COALESCE(MIN(created_at),''), COALESCE(MAX(created_at),'') FROM entropy WHERE 1=1"
+	var args []interface{}
+	if fromID > 0 {
+		query += " AND id >= ?"
+		args = append(args, fromID)
+	}
+	if toID > 0 {
+		query += " AND id <= ?"
+		args = append(args, toID)
+	}
+	err = s.db.QueryRow(query, args...).Scan(&firstTime, &lastTime)
+	return
+}
+
 func (s *Store) Reset() error {
 	_, err := s.db.Exec("DELETE FROM entropy")
 	return err

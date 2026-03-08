@@ -232,10 +232,18 @@ func handleQualityRaw(store *Store) http.HandlerFunc {
 			all = append(all, v...)
 		}
 
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		result := map[string]interface{}{
 			"samples": len(values),
 			"raw":     hex.EncodeToString(all),
-		})
+		}
+
+		firstTime, lastTime, err := store.TimeRangeForIDs(fromID, toID)
+		if err == nil && firstTime != "" {
+			result["first_time"] = firstTime
+			result["last_time"] = lastTime
+		}
+
+		json.NewEncoder(w).Encode(result)
 	}
 }
 
